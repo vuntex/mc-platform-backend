@@ -573,3 +573,81 @@ contract-seitig (real hier) bzw. spiegeln den Stand des Plugin-Repos.
   `GET_BALANCE` in den lokalen Cache → `/balance` zeigt den Wert; eine Backend-Änderung (Web/Admin)
   pusht über `mc:economy:balance` live in den Cache und damit ins Spiel.
 - Danach: SSE-Live-Push ans Webinterface (subscribt auf `mc:economy:balance`) und Config-CRUD/-Audit.
+
+---
+
+## Punishments — zweites Feature (Stand: 2026-06-20)
+
+**Backend-seitig komplett gebaut, event-sourced, `./gradlew build` grün** (41 neue Tests). Reihenfolge
+und Stil exakt wie Economy: `core-domain` → `application`/Ports → `infra-persistence` (jOOQ + Flyway) →
+`api-rest`, plus `plugin-protocol`-Ergänzungen. Punishments sind ein **paralleles Geschwister** von
+Economy (eigener Event-Store, eigene Tabellen) — **kein generischer Baustein wurde geändert**, einziger
+Eingriff in geteilten Code ist die eine Registry-Zeile in `PlatformProtocol.create()`.
+
+### Domäne (`core-domain/punishment`, framework-frei)
+- **Aggregat `Punishment`**: `id, player, type, reason, issuedBy, issuedAt, expiresAt (null=permanent/n.a.),
+  revokedBy, revokedAt, version`. `PunishmentType` = WARN|CHATBAN|TEMPBAN|PERMABAN, jeweils mit
+  `PunishmentCategory` (NOTICE|CHAT|ACCESS) und `isTimeBound()`.
+- **Event-sourced**: Events `ISSUED`/`REVOKED` (`PendingPunishmentEvent`/`AppliedPunishmentEvent`).
+  **EXPIRED ist KEIN Event** — `isActive(now)` = `nicht revoked ∧ (expiresAt == null ∨ expiresAt > now)`.
+- **Koexistenz-Regel** (`PunishmentPolicy`, unit-getestet): exklusive Kategorien (CHAT, ACCESS) lassen je
+  **eine** aktive Strafe zu; NOTICE (WARN) kumuliert. → Chatban + Ban ja, Warns beliebig, zweiter aktiver
+  Ban / zweiter Chatban → `PunishmentConflictException` (409). Idempotenz über `PunishmentTxId`
+  (punishment-lokal, bewusst NICHT economy's `TransactionId` — kein Cross-Feature-Coupling).
+
+### Persistenz (`infra-persistence`, Flyway V4–V6)
+- `punishment_event` (append-only, `uq_punishment_transaction`) + Projektion `punishment` (current state
+  je Aggregat, `category` mitgeführt). Schreibpfad in EINER Transaktion: Idempotenz-Lookup → bei
+  exklusiver Kategorie **`SELECT … FOR UPDATE` auf die `player`-Zeile + Re-Check** → Event inserten →
+  projizieren. Bewusst **kein** `version`-OCC wie Economy und **kein** partieller Unique-Index: die
+  Invariante hängt an `now()` (Ablauf), den ein statischer Index nicht ausdrücken kann — der Per-Player-
+  Lock ist der korrekte Concurrency-Backstop.
+- **Templates** `punishment_template` (+ `punishment_template_audit`): CRUD mit Audit analog
+  `server_config`/`config_audit` (`upsert` schreibt alt/neu-Snapshot). REST-seitig vorerst nur Lesen +
+  Anwenden (Schreib-Endpoints kommen mit dem Webinterface); Seeds: `cheating`/`spam`/`warn_minor`.
+- **`PermissionResolver`** (Port in `application.security`): erste Impl `JooqPermissionResolver` gegen
+  `team_role_member` (uuid→role) + `team_role_permission` (role→permission, `*` = alles). Bewusst
+  zwei Tabellen statt `server_config`-JSONB (queryable Many-to-Many). Eine spätere LuckPerms-Impl
+  ersetzt NUR diese eine Klasse — alles hängt am Port. Seeds: ADMIN=`*`, MODERATOR=Teilmenge (kein
+  `punishment.cheating`).
+
+### Berechtigung (backend-autoritativ)
+- Jeder Issue-/Revoke-/Template-Call prüft die required-permission **vor** dem Schreiben im
+  `PunishmentService`; fehlt sie → `PermissionDeniedException` (403). Direkter Issue:
+  `punishment.issue.<type>`; Template: dessen `requiredPermission`; Revoke: `punishment.revoke`.
+- `GET /templates` liefert **alle** aktiven Templates **+ pro Template ein `canApply`-Flag** (backend
+  berechnet für die abfragende UUID) — Entscheidung: bessere UX/Discoverability als Filtern, und nicht
+  fälschbar, weil serverseitig.
+
+### protocol (`plugin-protocol.punishment`, dependency-frei → Maven Local publiziert)
+- DTOs `PunishmentResponse`, `IssueRequest`, `IssueFromTemplateRequest`, `RevokeRequest`,
+  `TemplateResponse`; Event `PunishmentChangedEvent` + `PunishmentChangedEventCodec` (Wire über den
+  bestehenden `MessageEnvelope`, `messageType = punishment.changed`, kein neues Format).
+- `PunishmentChannels.CHANGED = mc:punishment:changed`. `PunishmentEndpoints`: `LIST_ACTIVE`, `ISSUE`,
+  `ISSUE_FROM_TEMPLATE`, `REVOKE`, `LIST_TEMPLATES`. Codec in `PlatformProtocol` registriert.
+
+### REST (`api-rest`)
+- `GET /api/players/{uuid}/punishments/active`, `POST .../punishments` (Issue),
+  `POST .../punishments/from-template`, `POST /api/punishments/{id}/revoke`,
+  `GET /api/punishments/templates?staff={uuid}`.
+- Fehler-Codes (`PunishmentExceptionHandler`, konsistent zu `EconomyExceptionHandler`): 403 fehlende
+  Permission, 409 Koexistenz-/Revoke-Konflikt, 404 unbekannte Strafe/Template, 422 semantisch ungültig
+  (z. B. TEMPBAN/CHATBAN ohne Dauer), 400 (Bad Request) bleibt beim Economy-Handler.
+- Bei jeder Zustandsänderung: `PunishmentChangedEvent` auf `mc:punishment:changed` (best-effort nach
+  Commit, gleicher Pfad wie `BalanceChangedEvent`).
+
+### Tests grün (41)
+- Domain: `PunishmentTest` (aktiv/expired/revoked), `PunishmentPolicyTest` (Koexistenz inkl.
+  expired/revoked blockiert nicht). Application: `PunishmentServiceTest` (Permission, Konflikt, Revoke,
+  Idempotenz+Publish-once, from-template, Validierung, canApply) mit Fakes + fixem `Clock`.
+- jOOQ/Testcontainers: `JooqPunishmentRepositoryTest` (issue+active+revoke, Idempotenz, exklusiv-Konflikt,
+  expired blockiert nicht, not-found/already-revoked), `JooqPermissionResolverTest`,
+  `JooqPunishmentTemplateRepositoryTest` (Audit-Trail). Protocol: `PunishmentChangedEventCodecTest`.
+  E2E: `PunishmentVerticalSliceTest` (issue→active→revoke + Pub/Sub-Event, 409 zweiter Ban,
+  from-template 200/403, `canApply`).
+
+### Offen / später
+- Template-Schreib-Endpoints (CRUD-UI) + Velocity/Plugin-Enforcement (Join-Block bei aktivem ACCESS-Ban,
+  Chat-Block bei aktivem CHATBAN) — Plugin-Repo.
+- Nach diesem zweiten event-sourced Feature lohnt die Prüfung, ob `TransactionId`/`PunishmentTxId` und der
+  Insert-in-Tx+Projektion-Kern zu einem gemeinsamen, economy-freien Baustein extrahiert werden (Rule of three).

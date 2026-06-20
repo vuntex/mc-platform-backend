@@ -3,9 +3,15 @@ package com.mcplatform.bootstrap.config;
 import com.mcplatform.application.economy.port.CurrencyRepository;
 import com.mcplatform.application.economy.port.EconomyEventStore;
 import com.mcplatform.application.economy.port.PlayerRepository;
+import com.mcplatform.application.punishment.port.PunishmentEventStore;
+import com.mcplatform.application.punishment.port.PunishmentTemplateRepository;
+import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.persistence.JooqCurrencyRepository;
 import com.mcplatform.persistence.JooqEconomyRepository;
+import com.mcplatform.persistence.JooqPermissionResolver;
 import com.mcplatform.persistence.JooqPlayerRepository;
+import com.mcplatform.persistence.JooqPunishmentRepository;
+import com.mcplatform.persistence.JooqPunishmentTemplateRepository;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -38,5 +44,20 @@ public class PersistenceConfig {
     @Bean
     CurrencyRepository currencyRepository(DSLContext dsl) {
         return new JooqCurrencyRepository(dsl);
+    }
+
+    @Bean
+    PunishmentEventStore punishmentEventStore(DSLContext dsl) {
+        return new JooqPunishmentRepository(dsl);
+    }
+
+    @Bean
+    PunishmentTemplateRepository punishmentTemplateRepository(DSLContext dsl) {
+        return new JooqPunishmentTemplateRepository(dsl);
+    }
+
+    @Bean
+    PermissionResolver permissionResolver(DSLContext dsl) {
+        return new JooqPermissionResolver(dsl);
     }
 }
