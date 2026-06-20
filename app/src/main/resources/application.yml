@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: mc-platform-backend
+  profiles:
+    default: local
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+
+---
+# Local development profile. Connection data comes from environment variables
+# (see .env.example); docker-compose provides Postgres + Redis.
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:mcplatform}
+    username: ${DB_USER:mcplatform}
+    password: ${DB_PASSWORD:mcplatform}
+
+mcplatform:
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+
+---
+# Test profile. The smoke test supplies datasource + redis via Testcontainers
+# (@DynamicPropertySource), so no static connection data is needed here.
+spring:
+  config:
+    activate:
+      on-profile: test
+  flyway:
+    enabled: true

@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+**/build/
+# Keep the wrapper jar (it lives under gradle/wrapper, not build/)
+
+# Local env
+.env
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+out/
+bin/
+
+# OS
+.DS_Store

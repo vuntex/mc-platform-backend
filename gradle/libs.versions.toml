@@ -1,0 +1,44 @@
+[versions]
+springBoot = "3.5.15"
+springDependencyManagement = "1.1.7"
+jooqDocker = "8.0.26"
+# jOOQ: the jooq-docker plugin 8.0.26 generates code for jOOQ 3.21, so the runtime jOOQ must
+# also be 3.21 (newest patch). The Spring Boot 3.5.15 BOM manages an older 3.19.x — :app forces
+# this version to keep the generated code and the runtime library identical.
+jooq = "3.21.6"
+flyway = "11.7.2"
+postgresql = "42.7.7"
+# Lettuce pinned to the version managed by the Spring Boot 3.5.15 BOM.
+# infra-cache uses Lettuce directly (no Spring), so the version is pinned here.
+lettuce = "6.6.0.RELEASE"
+# Test stack for the non-Spring modules (plugin-protocol, infra-cache); :app uses spring-boot-starter-test.
+junit = "5.13.4"
+assertj = "3.27.7"
+testcontainers = "1.21.4"
+
+[libraries]
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+
+jooq = { module = "org.jooq:jooq", version.ref = "jooq" }
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+lettuce = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+jooq-docker = { id = "dev.monosoul.jooq-docker", version.ref = "jooqDocker" }
