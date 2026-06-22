@@ -4,7 +4,7 @@
 > Verwaltung von User-Daten (Coins etc.) und Konfiguration über ein Webinterface, performant, gecached,
 > live für Online-User und korrekt für Offline-User.
 
-**Status:** Backend-Skeleton, Redis-Schema/Pub-Sub und die Economy-Operationen CREDIT/DEBIT/SET **und TRANSFER** stehen (event-sourced, idempotent, optimistic-locked); der geteilte Contract (`plugin-protocol`) ist feature-generisch (Envelope/Codec-Routing + REST-DTOs/-Endpoints), und das **Plugin-Skeleton steht** im separaten Repo `mc-platform-plugin` (Paper 1.21) und spricht über `plugin-protocol` (Maven Local) gegen das Backend — Abschnitt 9, Schritte 1, 2, 3 und 4 erledigt (Details im Abschnitt „Status" am Ende). Nächster Schritt: echter In-Game-Vertical-Slice (`/balance` zeigt den Wert live, „Es lebt").
+**Status:** Backend-Skeleton, Redis-Schema/Pub-Sub und die Economy-Operationen CREDIT/DEBIT/SET **und TRANSFER** stehen (event-sourced, idempotent, optimistic-locked) sowie eine **read-only History/Audit-Query** (`GET .../economy/history`, Keyset-Pagination über den Event Store); der geteilte Contract (`plugin-protocol`) ist feature-generisch (Envelope/Codec-Routing + REST-DTOs/-Endpoints), und das **Plugin-Skeleton steht** im separaten Repo `mc-platform-plugin` (Paper 1.21) und spricht über `plugin-protocol` (Maven Local) gegen das Backend — Abschnitt 9, Schritte 1, 2, 3 und 4 erledigt (Details im Abschnitt „Status" am Ende). Nächster Schritt: echter In-Game-Vertical-Slice (`/balance` zeigt den Wert live, „Es lebt").
 
 ---
 
@@ -380,6 +380,31 @@ Vollständiger Schreib-/Lesepfad CREDIT/DEBIT/SET durch alle Schichten:
 - **Tests grün:** `TransferTest` (Domain), `EconomyServiceTest` (Transfer + Idempotenz-Replay,
   DEBIT-Replay), jOOQ-Integration (atomarer Transfer, correlation_id in metadata, idempotenter Replay),
   app-E2E (Alice→Bob über REST).
+
+### Economy-History/Audit-Query erledigt (read-only, Keyset-Pagination)
+Read-only Audit-/Verlaufs-Query über den Event Store `economy_event` — „wohin/woher floss Geld".
+Keine neuen Events, kein Optimistic Locking, keine Idempotenz (reiner Read-Pfad).
+- **plugin-protocol (JDK-only):** `EconomyEventEntry` (sequenceNo, currencyCode, eventType als String,
+  amount, balanceAfter, transactionId, source, nullable correlationId, timestampEpochMilli),
+  `EconomyHistoryResponse` (player, entries, nullable `nextCursor`), neuer Endpoint
+  `EconomyEndpoints.GET_HISTORY` (GET `/api/players/{uuid}/economy/history`). Nach Maven Local publiziert.
+- **application:** Outbound-Port `EconomyEventStore.findHistory(player, Optional<currency>,
+  Optional<eventType>, cursorBeforeSeqNo, limit)` → `EconomyHistoryPage(entries, nextCursor)` mit
+  `EconomyHistoryEntry` (Domain-Typen). Use Case `EconomyHistoryService` clampt das Limit serverseitig
+  (Default 50, Max 200; nicht-positiv → `IllegalArgumentException` → 400), Cursor optional (null = neueste).
+- **infra-persistence (jOOQ, kein Spring):** Keyset-Pagination auf `sequence_no DESC` (neueste zuerst),
+  `WHERE player_uuid=? [AND currency_code=?] [AND event_type=?] [AND sequence_no < :cursor] LIMIT :limit+1`
+  — nutzt den vorhandenen Index `idx_event_player_currency`. Das +1 entscheidet `nextCursor` (mehr da →
+  `nextCursor` = `sequence_no` des letzten zurückgegebenen Eintrags, sonst null). `correlation_id` wird
+  per `metadata ->> 'correlation_id'` aus dem JSONB gelesen.
+- **api-rest:** `EconomyHistoryController` (dünn, getrennt neben `EconomyController`) —
+  `GET /api/players/{uuid}/economy/history?currency&type&before&limit`. Unbekannter Spieler/leeres
+  Ergebnis → leere `entries` + `nextCursor` null (kein 404). Ungültiger `type` / nicht-positives `limit`
+  → 400 über den bestehenden `EconomyExceptionHandler`-Stil.
+- **Tests grün:** jOOQ-Integration (Reihenfolge, Currency-/Type-Filter, Keyset-Pagination ohne
+  Lücken/Überlappung + korrekter `nextCursor`, correlation_id aus metadata mit beiden Transfer-Legs),
+  `EconomyHistoryServiceTest` (Limit-Clamping/Default/Cursor- & Filter-Weitergabe, Fakes),
+  app-E2E (CREDIT/DEBIT + Transfer über REST → GET history, Type-Filter, Pagination, 400-Pfade).
 
 ### Technische Notizen
 - **`-parameters`-Flag:** Controller liegen in `api-rest` (kein Spring-Boot-Plugin). Spring MVC braucht

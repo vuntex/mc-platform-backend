@@ -1,7 +1,9 @@
 package com.mcplatform.application.economy.port;
 
+import com.mcplatform.application.economy.EconomyHistoryPage;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
+import com.mcplatform.domain.economy.EconomyEventType;
 import com.mcplatform.domain.economy.PendingEconomyEvent;
 import com.mcplatform.domain.economy.TransactionId;
 import com.mcplatform.domain.economy.TransferId;
@@ -48,4 +50,17 @@ public interface EconomyEventStore {
 
     /** Look up a previously recorded transfer by its correlation id (for idempotent replay). */
     Optional<TransferResult> findTransfer(TransferId correlationId);
+
+    /**
+     * Read-only audit query: a page of a player's economy history, newest-first (descending
+     * sequence_no), via keyset pagination on sequence_no. Optionally filtered by {@code currency} and
+     * {@code eventType}. {@code cursorBeforeSeqNo} is exclusive — only events with a strictly smaller
+     * sequence_no are returned (pass {@code null} for the newest page). At most {@code limit} entries
+     * are returned; the implementation determines {@link EconomyHistoryPage#nextCursor()} from whether
+     * more rows exist. Writes nothing.
+     *
+     * @param limit the (already-clamped) maximum number of entries to return; must be positive
+     */
+    EconomyHistoryPage findHistory(PlayerId player, Optional<CurrencyCode> currency,
+            Optional<EconomyEventType> eventType, Long cursorBeforeSeqNo, int limit);
 }

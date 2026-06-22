@@ -4,10 +4,13 @@ import static com.mcplatform.persistence.jooq.Tables.ECONOMY_EVENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mcplatform.application.economy.EconomyHistoryEntry;
+import com.mcplatform.application.economy.EconomyHistoryPage;
 import com.mcplatform.application.economy.port.AppendResult;
 import com.mcplatform.application.economy.port.ConcurrencyConflictException;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
+import com.mcplatform.domain.economy.EconomyEventType;
 import com.mcplatform.domain.economy.Money;
 import com.mcplatform.domain.economy.PendingEconomyEvent;
 import com.mcplatform.domain.economy.TransactionId;
@@ -19,6 +22,7 @@ import com.mcplatform.domain.player.PlayerId;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -240,5 +244,141 @@ class JooqEconomyRepositoryTest {
                 DSL.field("{0} ->> 'correlation_id'", String.class, ECONOMY_EVENT.METADATA)
                         .eq(correlation.value().toString())))
                 .as("transfer applied exactly once (two legs)").isEqualTo(2);
+    }
+
+    // --- read-only history query -------------------------------------------
+
+    @Test
+    void historyReturnsEventsNewestFirstWithDirectionAndBalance() {
+        PlayerId p = newPlayer();
+        credit(p, coins, 100);
+        debit(p, coins, 30);
+        set(p, coins, 200);
+
+        EconomyHistoryPage page = economy.findHistory(p, Optional.empty(), Optional.empty(), null, 50);
+
+        assertThat(page.nextCursor()).isNull();
+        assertThat(page.entries()).extracting(EconomyHistoryEntry::type)
+                .containsExactly(EconomyEventType.SET, EconomyEventType.DEBITED, EconomyEventType.CREDITED);
+        // Newest-first ⇒ strictly descending sequence_no.
+        assertThat(page.entries()).extracting(EconomyHistoryEntry::sequenceNo).isSortedAccordingTo((a, b) -> Long.compare(b, a));
+        EconomyHistoryEntry newest = page.entries().get(0);
+        assertThat(newest.amount()).isEqualTo(Money.of(200));
+        assertThat(newest.balanceAfter()).isEqualTo(Money.of(200));
+        assertThat(newest.currency()).isEqualTo(coins);
+        assertThat(newest.source()).isEqualTo("TEST");
+        assertThat(newest.correlationId()).as("non-transfer events carry no correlation id").isNull();
+    }
+
+    @Test
+    void historyFiltersByCurrency() {
+        dsl.execute("INSERT INTO currency (code, display_name, symbol, decimal_places, default_balance) "
+                + "VALUES ('GEMS', 'Gems', NULL, 0, 0) ON CONFLICT (code) DO NOTHING");
+        CurrencyCode gems = CurrencyCode.of("GEMS");
+        PlayerId p = newPlayer();
+        credit(p, coins, 100);
+        credit(p, gems, 5);
+        credit(p, coins, 10);
+
+        EconomyHistoryPage coinsOnly = economy.findHistory(p, Optional.of(coins), Optional.empty(), null, 50);
+
+        assertThat(coinsOnly.entries()).hasSize(2);
+        assertThat(coinsOnly.entries()).allSatisfy(e -> assertThat(e.currency()).isEqualTo(coins));
+    }
+
+    @Test
+    void historyFiltersByEventType() {
+        PlayerId p = newPlayer();
+        credit(p, coins, 100);
+        debit(p, coins, 10);
+        debit(p, coins, 20);
+
+        EconomyHistoryPage debitsOnly =
+                economy.findHistory(p, Optional.empty(), Optional.of(EconomyEventType.DEBITED), null, 50);
+
+        assertThat(debitsOnly.entries()).hasSize(2);
+        assertThat(debitsOnly.entries()).allSatisfy(e -> assertThat(e.type()).isEqualTo(EconomyEventType.DEBITED));
+    }
+
+    @Test
+    void historyKeysetPaginatesWithoutGapsOrOverlap() {
+        PlayerId p = newPlayer();
+        for (int i = 0; i < 5; i++) {
+            credit(p, coins, 10);
+        }
+
+        // Walk every page with limit 2 and accumulate.
+        List<Long> seen = new ArrayList<>();
+        Long cursor = null;
+        int pages = 0;
+        do {
+            EconomyHistoryPage page = economy.findHistory(p, Optional.empty(), Optional.empty(), cursor, 2);
+            assertThat(page.entries().size()).isLessThanOrEqualTo(2);
+            page.entries().forEach(e -> seen.add(e.sequenceNo()));
+            cursor = page.nextCursor();
+            pages++;
+        } while (cursor != null && pages < 10);
+
+        assertThat(cursor).as("last page reports no further cursor").isNull();
+        assertThat(seen).as("all 5 events, no gaps").hasSize(5);
+        assertThat(seen).as("no overlap between pages").doesNotHaveDuplicates();
+        assertThat(seen).as("globally newest-first across pages").isSortedAccordingTo((a, b) -> Long.compare(b, a));
+    }
+
+    @Test
+    void historyNextCursorPointsToLastReturnedEntry() {
+        PlayerId p = newPlayer();
+        for (int i = 0; i < 3; i++) {
+            credit(p, coins, 10);
+        }
+
+        EconomyHistoryPage firstPage = economy.findHistory(p, Optional.empty(), Optional.empty(), null, 2);
+
+        assertThat(firstPage.entries()).hasSize(2);
+        assertThat(firstPage.nextCursor())
+                .isEqualTo(firstPage.entries().get(firstPage.entries().size() - 1).sequenceNo());
+        // The next page starts strictly below the cursor and yields the remaining (oldest) event.
+        EconomyHistoryPage secondPage =
+                economy.findHistory(p, Optional.empty(), Optional.empty(), firstPage.nextCursor(), 2);
+        assertThat(secondPage.entries()).hasSize(1);
+        assertThat(secondPage.entries().get(0).sequenceNo()).isLessThan(firstPage.nextCursor());
+        assertThat(secondPage.nextCursor()).isNull();
+    }
+
+    @Test
+    void historyReadsCorrelationIdFromBothTransferLegs() {
+        PlayerId from = newPlayer();
+        PlayerId to = newPlayer();
+        credit(from, coins, 100);
+
+        Balance balanceFrom = economy.currentBalance(from, coins);
+        Balance balanceTo = economy.currentBalance(to, coins);
+        TransferId correlation = TransferId.random();
+        TransferEvents events = Transfer.prepare(balanceFrom, balanceTo, Money.of(30), correlation, "WEB:transfer");
+        economy.transfer(events.out(), balanceFrom.version(), events.in(), balanceTo.version());
+
+        EconomyHistoryEntry outLeg = economy.findHistory(from, Optional.empty(),
+                Optional.of(EconomyEventType.TRANSFER_OUT), null, 50).entries().get(0);
+        EconomyHistoryEntry inLeg = economy.findHistory(to, Optional.empty(),
+                Optional.of(EconomyEventType.TRANSFER_IN), null, 50).entries().get(0);
+
+        assertThat(outLeg.correlationId()).isEqualTo(correlation.value());
+        assertThat(inLeg.correlationId()).isEqualTo(correlation.value());
+        assertThat(outLeg.correlationId()).as("both legs share one correlation id").isEqualTo(inLeg.correlationId());
+    }
+
+    private long credit(PlayerId p, CurrencyCode c, long amount) {
+        Balance b = economy.currentBalance(p, c);
+        return economy.append(b.credit(Money.of(amount), TransactionId.random(), "TEST"), b.version()).version();
+    }
+
+    private long debit(PlayerId p, CurrencyCode c, long amount) {
+        Balance b = economy.currentBalance(p, c);
+        return economy.append(b.debit(Money.of(amount), TransactionId.random(), "TEST"), b.version()).version();
+    }
+
+    private long set(PlayerId p, CurrencyCode c, long amount) {
+        Balance b = economy.currentBalance(p, c);
+        return economy.append(b.set(Money.of(amount), TransactionId.random(), "TEST"), b.version()).version();
     }
 }

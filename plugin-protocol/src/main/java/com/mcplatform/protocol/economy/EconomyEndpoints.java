@@ -16,6 +16,15 @@ public final class EconomyEndpoints {
     public static final EndpointDescriptor<Void, BalanceResponse> GET_BALANCE =
             new EndpointDescriptor<>(HttpMethod.GET, BASE, Void.class, BalanceResponse.class);
 
+    /**
+     * GET a page of the player's economy history (read-only audit trail), newest-first. Optional query
+     * params: {@code currency}, {@code type} (event type), {@code before} (keyset cursor =
+     * {@code nextCursor} of the previous page), {@code limit}.
+     */
+    public static final EndpointDescriptor<Void, EconomyHistoryResponse> GET_HISTORY =
+            new EndpointDescriptor<>(HttpMethod.GET, "/api/players/{uuid}/economy/history",
+                    Void.class, EconomyHistoryResponse.class);
+
     /** POST credit (add coins). */
     public static final EndpointDescriptor<AmountRequest, BalanceResponse> CREDIT =
             new EndpointDescriptor<>(HttpMethod.POST, BASE + "/credit", AmountRequest.class, BalanceResponse.class);

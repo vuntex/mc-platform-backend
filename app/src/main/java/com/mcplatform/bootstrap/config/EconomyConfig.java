@@ -1,5 +1,6 @@
 package com.mcplatform.bootstrap.config;
 
+import com.mcplatform.application.economy.EconomyHistoryService;
 import com.mcplatform.application.economy.EconomyService;
 import com.mcplatform.application.economy.port.BalanceCachePort;
 import com.mcplatform.application.economy.port.BalanceEventPublisher;
@@ -28,5 +29,10 @@ public class EconomyConfig {
     @Bean
     EconomyService economyService(EconomyEventStore store, BalanceCachePort cache, BalanceEventPublisher publisher) {
         return new EconomyService(store, cache, publisher);
+    }
+
+    @Bean
+    EconomyHistoryService economyHistoryService(EconomyEventStore store) {
+        return new EconomyHistoryService(store);
     }
 }

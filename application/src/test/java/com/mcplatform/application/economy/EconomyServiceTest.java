@@ -12,6 +12,7 @@ import com.mcplatform.application.economy.port.TransferResult;
 import com.mcplatform.domain.economy.AppliedEconomyEvent;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
+import com.mcplatform.domain.economy.EconomyEventType;
 import com.mcplatform.domain.economy.InsufficientFundsException;
 import com.mcplatform.domain.economy.Money;
 import com.mcplatform.domain.economy.PendingEconomyEvent;
@@ -184,6 +185,12 @@ class EconomyServiceTest {
             AppendResult out = byTx.get(correlationId.outboundTransactionId().value());
             AppendResult in = byTx.get(correlationId.inboundTransactionId().value());
             return (out != null && in != null) ? Optional.of(new TransferResult(out, in)) : Optional.empty();
+        }
+
+        @Override
+        public EconomyHistoryPage findHistory(PlayerId player, Optional<CurrencyCode> currency,
+                Optional<EconomyEventType> eventType, Long cursorBeforeSeqNo, int limit) {
+            throw new UnsupportedOperationException("history not exercised by EconomyServiceTest");
         }
 
         private long versionOf(String key) {
