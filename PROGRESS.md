@@ -1,8 +1,9 @@
 # MC Platform — Backend & Plugin
 
-> Professionelles Minecraft-Backend für einen 1.21 Server (Paper) mit Velocity-Netzwerk-Fähigkeit.
+> Professionelles Minecraft-Backend für einen 1.21 Paper-Server (Single-Node, Velocity zurückgestellt).
 > Verwaltung von User-Daten (Coins etc.) und Konfiguration über ein Webinterface, performant, gecached,
-> live für Online-User und korrekt für Offline-User.
+>live für Online-User und korrekt für Offline-User. Migration eines großen 1.8.9-Plugins in diese
+>Architektur läuft (Spec-Kit, selektiv ~80%).
 
 **Status:** Backend-Skeleton, Redis-Schema/Pub-Sub und die Economy-Operationen CREDIT/DEBIT/SET **und TRANSFER** stehen (event-sourced, idempotent, optimistic-locked) sowie eine **read-only History/Audit-Query** (`GET .../economy/history`, Keyset-Pagination über den Event Store); der geteilte Contract (`plugin-protocol`) ist feature-generisch (Envelope/Codec-Routing + REST-DTOs/-Endpoints), und das **Plugin-Skeleton steht** im separaten Repo `mc-platform-plugin` (Paper 1.21) und spricht über `plugin-protocol` (Maven Local) gegen das Backend — Abschnitt 9, Schritte 1, 2, 3 und 4 erledigt (Details im Abschnitt „Status" am Ende). Nächster Schritt: echter In-Game-Vertical-Slice (`/balance` zeigt den Wert live, „Es lebt").
 
@@ -676,3 +677,117 @@ Eingriff in geteilten Code ist die eine Registry-Zeile in `PlatformProtocol.crea
   Chat-Block bei aktivem CHATBAN) — Plugin-Repo.
 - Nach diesem zweiten event-sourced Feature lohnt die Prüfung, ob `TransactionId`/`PunishmentTxId` und der
   Insert-in-Tx+Projektion-Kern zu einem gemeinsamen, economy-freien Baustein extrahiert werden (Rule of three).
+
+---
+
+## Kurskorrektur & Migrations-Setup (Stand: 2026-06-22)
+
+**Architektur-Entscheidung revidiert: Single-Server statt Multi-Server/Velocity.**
+Frühere Einträge (Abschnitte 1–2, „1..N Nodes", „200+ Peak", Pub/Sub „über alle Nodes hinweg")
+spiegeln den ursprünglichen Multi-Server-Plan — bewusst als Historie belassen. Aktueller Stand:
+
+- **Single Paper-Node.** Kein Distributed-Locking, kein Cross-Server-Item-Dupe-Schutz, keine
+  Cross-Server-Presence nötig. Velocity ist zurückgestellt (nicht gestrichen, aber kein Designtreiber).
+- **Redis-Pub/Sub bleibt** der Live-Pfad Backend↔Plugin/Webinterface (Cache-Invalidierung, Live-Push),
+  nicht zwischen Game-Servern. Das alte RAM-Cache+Flush-Modell wird trotzdem durch „Plugin schreibt
+  durchs Backend" ersetzt — als Crash-Sicherheit/Qualität, nicht aus Multi-Server-Zwang.
+- **Externer Webshop** ist ein legitimer zweiter Schreib-Akteur für Economy: Käufe als event-sourced
+  Credit mit `source='WEBSHOP'`, idempotent über Bestell-ID. Backend bleibt Balance-Wahrheit.
+- **Moderation aufgeteilt:** Spieler-Strafen → Punishments; Globalmute/Chatclear/Wordfilter/Broadcast
+  → Server-/Moderation-Tools (Server-Zustand); Reports + Support/Tickets → eigenes Moderation/Tickets-
+  Modul (Anschuldigung ≠ Urteil).
+
+**Migration via Spec-Kit aufgesetzt.** Constitution unter `.specify/memory/constitution.md`, CLAUDE.md
+verankert. Altes Plugin inventarisiert in `FEATURE_INVENTORY.md` (91 Features, ~80% migrieren).
+Vorgehen: ein Feature = ein kompletter Vertical Slice (Backend → publish → Plugin), eins nach dem
+anderen, in Inventar-Reihenfolge.
+
+**Offen / beim dritten event-sourced Feature prüfen:** Die in der Punishments-Sektion notierte
+Rule-of-three-Extraktion (`TransactionId`/`PunishmentTxId` + Insert-in-Tx+Projektion-Kern → gemeinsamer
+economy-freier Baustein) wird beim ersten datenzentrischen Import relevant — bewusst beobachten, ob
+sich ein drittes paralleles Geschwister lohnt oder die Generalisierung.
+
+### Nächster Schritt
+- **Phase-0-Pipeline-Test** (Spec-Kit-Workflow validieren an etwas Risikoarmem): Worldborder (#89)
+  oder Settings/Toggles (#9) als kompletter Slice. Ziel: beweisen, dass Spec→Plan→Tasks→Implement
+  sauber durch beide Repos läuft, bevor ein großes Feature riskiert wird.
+
+---
+
+## Reports — drittes Feature (Moderation-Modul, Stand: 2026-06-22)
+
+**Backend-seitig komplett gebaut, `./gradlew build` grün.** Erstes Feature, das den vollen Spec-Kit-Lauf
+(specify → clarify → plan → tasks → analyze → implement) durchlaufen hat. Reports sind ein
+**eigenständiges Moderation-Modul, strikt getrennt von Punishments** (Constitution-Prinzip 16:
+Anschuldigung ≠ Urteil). Spec/Plan/Artefakte unter `specs/001-reports/`.
+
+### Bewusst NICHT event-sourced (Kontrast zu Economy/Punishments)
+Reports sind **state-stored**: Zustandstabelle `report` + Audit-Tabelle `report_status_history` (analog
+`server_config`/`config_audit`). Begründung (Prinzip 6): ein Report ist kein geld-/urteils-kritisches
+Aggregat; der einzige Audit-Bedarf („wer hat wann den Status geändert") deckt die History-Tabelle. Damit
+**kein** drittes event-sourced Geschwister — die notierte Rule-of-three-Extraktion bleibt unberührt.
+Concurrency über **Optimistic Locking** (`report.version`), Dedupe/Idempotenz über einen **partiellen
+Unique-Index** `(reporter,target) WHERE status IN ('OPEN','IN_PROGRESS')` (statischer Invariant → Index
+statt Per-Player-Lock wie bei Punishments).
+
+### Domäne (`core-domain/report`, framework-frei)
+- Aggregat `Report` (state-stored record): `id, reporter, target, category, detail, chatContext, status,
+  createdAt, lastHandledBy, lastStatusChangeAt, version`. Factory `create` (Self-Report-Sperre +
+  Detail-Validierung), `transitionTo` (Status-Übergangsregeln). `ReportStatus` (OPEN→IN_PROGRESS→
+  RESOLVED/REJECTED, terminal-Regeln), `ReportCategory` (CHEATING|BELEIDIGUNG|SPAM_WERBUNG|
+  TEAMING_BUG_ABUSE|SONSTIGES). `ChatContext`/`ChatContextEntry` (unveränderlicher öffentlicher
+  Chat-Schnappschuss, mehrere Absender, Größen-/Längen-Validierung). `ReportChange` (Live-Notifikation,
+  **ohne** Chat-Kontext). Exceptions `ReportValidationException`/`InvalidStatusTransitionException`.
+
+### Persistenz (`infra-persistence`, Flyway V7–V8, jOOQ)
+- `V7__report_schema.sql`: `report` (+ partieller Unique-Index `uq_report_open`, CHECK
+  `reporter<>target`, Indizes), `report_chat_message` (1:N-Kind-Tabelle für den Chat-Schnappschuss —
+  **bewusst statt JSONB**, weil `infra-persistence` keine JSON-Lib hat; robuster Round-Trip über
+  jOOQ-Zeilen), `report_status_history` (Audit je Statuswechsel). `V8__seed_report_permissions.sql`
+  (`report.view`/`report.handle` → MODERATOR; ADMIN via `*`).
+- `JooqReportRepository`: create (report + chat + History in 1 TX; Unique-Verletzung → bestehenden
+  offenen Report zurück = Dedupe; FK-Verletzung → ValidationException), `findOpenFor`,
+  `lastCreatedAtByReporter` (Cooldown), `findOpen`, `find`, `changeStatus` (OCC + History).
+
+### Application (`application/report`)
+- `ReportService`: `create` (Dedupe → Cooldown → persist → publish), `listOpen` (`report.view`-Gate),
+  `changeStatus` (`report.handle`-Gate, Domain-Übergang, OCC, publish). Ports `ReportRepository`,
+  `ReportPublisher`. **PermissionResolver wiederverwendet** (kein Neubau). Cooldown als Config
+  (`mcplatform.reports.cooldown-seconds`, Default 60).
+
+### protocol (`plugin-protocol.report`, JDK-only → Maven Local publiziert)
+- DTOs `CreateReportRequest`/`ChangeStatusRequest`/`ReportResponse`/`ChatMessage`; Event
+  `ReportChangedEvent` + `ReportChangedEventCodec` (`messageType = report.changed`, 7-Feld-Pipe-Wire);
+  `ReportChannels.CHANGED = mc:report:changed`; `ReportEndpoints` (CREATE/LIST_OPEN/CHANGE_STATUS).
+  Codec in `PlatformProtocol.create()` registriert — **der einzige Eingriff in geteilten Code**. POM
+  weiterhin ohne `<dependencies>`.
+
+### REST (`api-rest`)
+- `POST /api/reports` (offen, kein Permission-Gate), `GET /api/reports/open?staff=` (report.view),
+  `POST /api/reports/{id}/status` (report.handle). `ReportExceptionHandler` ergänzt 422
+  (`report_invalid`), 429 (`report_cooldown`), 404 (`report_not_found`), 409 (`report_conflict` —
+  ungültiger Übergang + OCC). **403/400 bewusst NICHT re-deklariert** (globales Mapping aus
+  Punishment-/Economy-Handler greift; Doppel-Deklaration wäre ambiger Konflikt).
+
+### Berechtigung / Abgrenzung
+- Erstellen: jeder Spieler. Sehen/Bearbeiten: backend-autoritativ über PermissionResolver. Ein Report
+  **erzeugt nie eine Strafe** — kein Schreibpfad ins Punishments-Modul, keine geteilten Idempotenz-Keys.
+
+### Bewusste Grenzen (Slice 1)
+- Kein Lese-/Such-Endpoint für **abgeschlossene** Reports (nur DB-auditierbar), keine Aggregation
+  mehrerer Melder, keine Spieler-Benachrichtigung über den Ausgang, **keine PNs** im Chat-Kontext (nur
+  öffentlicher Chat — PN-Datenschutz-Policy verschoben), kein Auto-Purge/Retention (unbegrenzt).
+  Plugin-/Menü-Seite (Adventure-Menü) ist separate Plugin-Arbeit.
+
+### Tests grün
+- Domain: `ReportTest` (Self-Report/Detail/Chat-Validierung), `ReportStatusTest` (Übergangsmatrix).
+  Application: `ReportServiceTest` (Dedupe, Cooldown, Permission-Gates, Lifecycle, Publish-once, Fakes).
+  jOOQ/Testcontainers: `JooqReportRepositoryTest` (persist+History+Chat-Round-Trip, Dedupe via
+  Unique-Index, FK-unbekanntes-Ziel, OCC-Konflikt, findOpen). Protocol: `ReportChangedEventCodecTest`
+  (Roundtrip + Golden-Wire + Routing). E2E: `ReportVerticalSliceTest` (create+Chat, 422/429/403/404/409,
+  offene Liste, Status-Lebenszyklus, Pub/Sub CREATED+STATUS_CHANGED).
+
+### Offen / später
+- US-Erweiterungen: Lese-/Historien-Endpoint für abgeschlossene Reports, PN-Chat-Kontext (mit
+  Datenschutz-Policy), Retention/Purge, optionale Referenz Report→Punishment. Plugin-Slice (Menü +
+  EventBus-Anbindung an `mc:report:changed`).
