@@ -86,5 +86,5 @@ ein gemeinsames Projekt behandeln.
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/001-reports/plan.md` (Feature: Reports — Moderation-Modul, state-stored, Branch `001-reports`).
+`specs/002-permission-rank-system/plan.md` (Feature: Permission-/Rank-System — Foundation, state-stored, Branch `002-permission-rank-system`).
 <!-- SPECKIT END -->

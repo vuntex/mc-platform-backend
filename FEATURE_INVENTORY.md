@@ -22,6 +22,12 @@
 - **Externe Abhängigkeiten:** WorldGuard/WorldEdit/FAWE, LuckPerms (Ränge/Permissions),
   ProtocolLib (Captcha-Maps, Fake-Walls), HologramAPI, FakeMobs, NuVotifier, ViaVersion,
   ItemNBT-API, MineChaosUMCSpigot, MineChaosDiscordBot, PolarLoader (Anticheat).
+  - ✅ **Ränge/Permissions migriert (Foundation, Branch `002-permission-rank-system`):** Das
+    LuckPerms-gekoppelte Autoritätsmodell ist durch ein backend-autoritatives Permission-/Rank-System
+    hinter dem `PermissionResolver`-Port ersetzt (flache Rollen, mehrere Rang-Grants mit Ablauf,
+    additive Wildcard-Auflösung, Live-Entzug via `mc:permission:changed`). Details: PROGRESS.md,
+    Abschnitt „Permissions/Ranks — viertes Feature". Die Web-Login↔UUID-Verknüpfung bleibt späteres
+    Auth-Feature; das Permission-Modell ist bereits einheitlich (eine Welt, kein zweites Authority-Enum).
 
 ### Kategorien-Legende
 - **DATA-CENTRIC** = lebt von persistenten Daten → Backend wird Source of Truth (Domäne + Persistenz + REST + ggf. Pub-Sub).

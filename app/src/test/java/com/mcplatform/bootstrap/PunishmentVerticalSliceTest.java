@@ -1,6 +1,7 @@
 package com.mcplatform.bootstrap;
 
-import static com.mcplatform.persistence.jooq.Tables.TEAM_ROLE_MEMBER;
+import static com.mcplatform.persistence.jooq.Tables.PLAYER_ROLE_GRANT;
+import static com.mcplatform.persistence.jooq.Tables.ROLE;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mcplatform.cache.RedisCacheAdapter;
@@ -72,7 +73,13 @@ class PunishmentVerticalSliceTest {
 
     private UUID staff(String role) {
         UUID uuid = UUID.randomUUID();
-        dsl.insertInto(TEAM_ROLE_MEMBER).set(TEAM_ROLE_MEMBER.UUID, uuid).set(TEAM_ROLE_MEMBER.ROLE, role).execute();
+        long roleId = dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq(role)).fetchOne(ROLE.ID);
+        dsl.insertInto(PLAYER_ROLE_GRANT)
+                .set(PLAYER_ROLE_GRANT.UUID, uuid)
+                .set(PLAYER_ROLE_GRANT.ROLE_ID, roleId)
+                .set(PLAYER_ROLE_GRANT.ISSUED_BY, uuid)
+                .set(PLAYER_ROLE_GRANT.ACTIVE, true)
+                .execute();
         return uuid;
     }
 
