@@ -10,6 +10,8 @@ import com.mcplatform.application.punishment.port.PunishmentEventStore;
 import com.mcplatform.application.punishment.port.PunishmentTemplateRepository;
 import com.mcplatform.application.report.port.ReportRepository;
 import com.mcplatform.application.security.PermissionResolver;
+import com.mcplatform.application.webauth.port.LinkTokenRepository;
+import com.mcplatform.application.webauth.port.WebAccountRepository;
 import com.mcplatform.persistence.JooqCurrencyRepository;
 import com.mcplatform.persistence.JooqEconomyRepository;
 import com.mcplatform.persistence.JooqGrantAuditRepository;
@@ -18,8 +20,10 @@ import com.mcplatform.persistence.JooqPlayerGrantRepository;
 import com.mcplatform.persistence.JooqPlayerRepository;
 import com.mcplatform.persistence.JooqPunishmentRepository;
 import com.mcplatform.persistence.JooqPunishmentTemplateRepository;
+import com.mcplatform.persistence.JooqLinkTokenRepository;
 import com.mcplatform.persistence.JooqReportRepository;
 import com.mcplatform.persistence.JooqRoleRepository;
+import com.mcplatform.persistence.JooqWebAccountRepository;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -87,5 +91,15 @@ public class PersistenceConfig {
     @Bean
     GrantAuditPort grantAuditPort(DSLContext dsl) {
         return new JooqGrantAuditRepository(dsl);
+    }
+
+    @Bean
+    WebAccountRepository webAccountRepository(DSLContext dsl) {
+        return new JooqWebAccountRepository(dsl);
+    }
+
+    @Bean
+    LinkTokenRepository linkTokenRepository(DSLContext dsl) {
+        return new JooqLinkTokenRepository(dsl);
     }
 }

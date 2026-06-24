@@ -18,6 +18,14 @@ management:
       probes:
         enabled: true
 
+mcplatform:
+  webauth:
+    # Web-auth bridge tuning. TTL of link/reset tokens; per-(uuid, purpose) request cooldown; and the
+    # expired-token purge interval (hygiene only — redemption already rejects expired tokens).
+    token-ttl-minutes: 10
+    token-cooldown-seconds: 60
+    purge-interval-ms: 3600000
+
 ---
 # Local development profile. Connection data comes from environment variables
 # (see .env.example); docker-compose provides Postgres + Redis.

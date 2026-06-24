@@ -22,6 +22,10 @@ dependencies {
     implementation(libs.spring.boot.starter.web)
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.actuator)
+    // BCrypt for the web-auth bridge. The PasswordHasher port lives in core-domain; this is its only
+    // implementation, wired in WebAuthConfig. Kept here (not in infra-persistence) to keep that module
+    // Spring-free.
+    implementation(libs.spring.security.crypto)
     // Redis runs through the framework-free infra-cache adapter (Lettuce), wired in CacheConfig.
     // No spring-boot-starter-data-redis: a single Redis connection path, no second Lettuce pool.
 

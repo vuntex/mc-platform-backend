@@ -86,5 +86,5 @@ ein gemeinsames Projekt behandeln.
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/002-permission-rank-system/plan.md` (Feature: Permission-/Rank-System — Foundation, state-stored, Branch `002-permission-rank-system`).
+`specs/003-web-auth-bridge/plan.md` (Feature: Web-Auth-Bridge — Ingame-Web-Account-Verknüpfung, state-stored, Branch `003-web-auth-bridge`).
 <!-- SPECKIT END -->
