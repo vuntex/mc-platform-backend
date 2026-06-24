@@ -5,6 +5,7 @@ import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.PermissionChangePublisher;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
 import com.mcplatform.application.permission.port.RoleNameConflictException;
+import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.RoleNotFoundException;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.security.PermissionDeniedException;
@@ -42,15 +43,18 @@ public final class PermissionAdminService {
     private final RoleRepository roles;
     private final PlayerGrantRepository grants;
     private final GrantAuditPort audit;
+    private final RoleAuditPort roleAudit;
     private final PermissionChangePublisher publisher;
     private final PermissionResolver permissions;
     private final Clock clock;
 
     public PermissionAdminService(RoleRepository roles, PlayerGrantRepository grants, GrantAuditPort audit,
-            PermissionChangePublisher publisher, PermissionResolver permissions, Clock clock) {
+            RoleAuditPort roleAudit, PermissionChangePublisher publisher, PermissionResolver permissions,
+            Clock clock) {
         this.roles = roles;
         this.grants = grants;
         this.audit = audit;
+        this.roleAudit = roleAudit;
         this.publisher = publisher;
         this.permissions = permissions;
         this.clock = clock;
@@ -64,7 +68,9 @@ public final class PermissionAdminService {
         roles.findByNameIgnoreCase(draft.name()).ifPresent(r -> {
             throw new RoleNameConflictException(draft.name());
         });
-        return roles.create(draft, actor);
+        Role saved = roles.create(draft, actor);
+        roleAudit.record(RoleAuditPort.Action.ROLE_CREATE, saved.id(), saved.name(), null, actor, clock.instant());
+        return saved;
     }
 
     /** Update name/display/weight/teamRank/active. The default role can be renamed but not deactivated. */
@@ -82,6 +88,7 @@ public final class PermissionAdminService {
         // isDefault is immutable here — preserve the stored value.
         Role toSave = withIsDefault(role, existing.isDefault());
         Role saved = roles.update(toSave);
+        roleAudit.record(RoleAuditPort.Action.ROLE_UPDATE, saved.id(), saved.name(), null, actor, clock.instant());
         if (existing.active() != saved.active()) {
             // (de)activation changes effective rights of all holders (FR-007a / FR-021).
             publishToHolders(saved.id());
@@ -99,6 +106,7 @@ public final class PermissionAdminService {
         Instant now = clock.instant();
         List<PlayerId> holders = grants.activeHoldersOf(id, now);
         roles.delete(id); // cascades player_role_grant + role_permission rows
+        roleAudit.record(RoleAuditPort.Action.ROLE_DELETE, id, role.name(), null, actor, now);
         for (PlayerId holder : holders) {
             audit.record(GrantAuditPort.Entry.role(GrantAuditPort.Action.REVOKE, holder, id, actor,
                     "role deleted", now));
@@ -109,16 +117,21 @@ public final class PermissionAdminService {
     /** Add a permission to a role's configuration. Requires {@link #ROLE_EDIT}. */
     public void addRolePermission(RoleId id, String permission, java.util.UUID actor) {
         requirePermission(actor, ROLE_EDIT);
-        roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
+        com.mcplatform.domain.permission.PermissionString.validate(permission); // FR-014 → 422
+        Role role = roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
         roles.addPermission(id, permission, actor);
+        roleAudit.record(RoleAuditPort.Action.ROLE_PERMISSION_ADD, id, role.name(), permission, actor,
+                clock.instant());
         publishToHolders(id);
     }
 
     /** Remove a permission from a role's configuration. Requires {@link #ROLE_EDIT}. */
     public void removeRolePermission(RoleId id, String permission, java.util.UUID actor) {
         requirePermission(actor, ROLE_EDIT);
-        roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
+        Role role = roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
         roles.removePermission(id, permission);
+        roleAudit.record(RoleAuditPort.Action.ROLE_PERMISSION_REMOVE, id, role.name(), permission, actor,
+                clock.instant());
         publishToHolders(id);
     }
 
@@ -150,6 +163,7 @@ public final class PermissionAdminService {
     public void grantPermission(PlayerId player, String permission, Instant expiresAt, String reason,
             java.util.UUID actor) {
         requirePermission(actor, GRANT_PERMISSION);
+        com.mcplatform.domain.permission.PermissionString.validate(permission); // FR-014 → 422
         Instant now = clock.instant();
         requireFutureExpiry(expiresAt, now);
         grants.upsertPermissionGrant(new PermissionGrant(player, permission, actor, now, expiresAt, reason, true));

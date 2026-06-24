@@ -7,9 +7,11 @@ import com.mcplatform.application.permission.PermissionFakes.FakeAudit;
 import com.mcplatform.application.permission.PermissionFakes.FakeGrantRepository;
 import com.mcplatform.application.permission.PermissionFakes.FakePublisher;
 import com.mcplatform.application.permission.PermissionFakes.FakeResolver;
+import com.mcplatform.application.permission.PermissionFakes.FakeRoleAudit;
 import com.mcplatform.application.permission.PermissionFakes.FakeRoleRepository;
 import com.mcplatform.application.permission.port.DefaultRoleProtectedException;
 import com.mcplatform.application.permission.port.GrantAuditPort;
+import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.RoleNameConflictException;
 import com.mcplatform.application.security.PermissionDeniedException;
 import com.mcplatform.domain.permission.PermissionChangeType;
@@ -33,6 +35,7 @@ class PermissionAdminServiceTest {
     private FakeRoleRepository roles;
     private FakeGrantRepository grants;
     private FakeAudit audit;
+    private FakeRoleAudit roleAudit;
     private FakePublisher publisher;
     private PermissionAdminService svc;
     private Role defaultRole;
@@ -44,8 +47,9 @@ class PermissionAdminServiceTest {
         defaultRole = roles.seed(PermissionFakes.role(1, "DEFAULT", true, true));
         grants = new FakeGrantRepository();
         audit = new FakeAudit();
+        roleAudit = new FakeRoleAudit();
         publisher = new FakePublisher();
-        svc = new PermissionAdminService(roles, grants, audit, publisher, resolver, clock);
+        svc = new PermissionAdminService(roles, grants, audit, roleAudit, publisher, resolver, clock);
     }
 
     private Role draft(String name) {
@@ -147,6 +151,29 @@ class PermissionAdminServiceTest {
 
         assertThat(audit.count(GrantAuditPort.Action.REVOKE)).isEqualTo(1);
         assertThat(publisher.countOfType(PermissionChangeType.GRANT_REVOKED)).isEqualTo(1);
+    }
+
+    @Test
+    void createRoleIsAuditedWithActingAdmin() {
+        svc.createRole(draft("Premium"), admin);
+        assertThat(roleAudit.count(RoleAuditPort.Action.ROLE_CREATE)).isEqualTo(1);
+        assertThat(roleAudit.actors).containsOnly(admin);
+    }
+
+    @Test
+    void roleMasterAndPermissionChangesAreAudited() {
+        Role supporter = svc.createRole(draft("Supporter"), admin);
+        svc.updateRole(new Role(supporter.id(), "Supporter", "Supporter+", null, null, null, null, null, null,
+                5, false, true, false), admin);
+        svc.addRolePermission(supporter.id(), "home.set", admin);
+        svc.removeRolePermission(supporter.id(), "home.set", admin);
+        svc.deleteRole(supporter.id(), admin);
+
+        assertThat(roleAudit.count(RoleAuditPort.Action.ROLE_UPDATE)).isEqualTo(1);
+        assertThat(roleAudit.count(RoleAuditPort.Action.ROLE_PERMISSION_ADD)).isEqualTo(1);
+        assertThat(roleAudit.count(RoleAuditPort.Action.ROLE_PERMISSION_REMOVE)).isEqualTo(1);
+        assertThat(roleAudit.count(RoleAuditPort.Action.ROLE_DELETE)).isEqualTo(1);
+        assertThat(roleAudit.permissions).contains("home.set");
     }
 
     @Test

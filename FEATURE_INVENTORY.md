@@ -41,6 +41,15 @@
     api-rest, jjwt nur in app, `PlatformProtocol.create()` unangetastet. Details: PROGRESS.md,
     „JWT-Login-Session — sechstes Feature". Verschoben: Brute-Force-Schutz, „alle Geräte abmelden",
     Web-Feature-Endpoints (Slice 6), `/web unlink`.
+  - ✅ **Rank-Management-Backend gebaut (Branch `005-rank-management-api`):** Die vom Webinterface
+    genutzte, JWT-abgesicherte Schreib-/Lesefläche `/api/web/permission/**` fürs Rollen-/Permission-/
+    Grant-Management. Wiederverwendet den kompletten 002-Schreibkern (Domäne, `PermissionAdminService`,
+    Repos, Publisher) + den 004-JWT-Filter; Akteur aus dem Token (Web-DTOs **ohne `actor`**), granulare
+    `permission.*`-Gates (kein neues `rank.*`), player-scoped Live-Push (bestehendes Event), neuer
+    append-only `role_audit`-Strang (V13, FR-025a) + minimaler `PermissionString`-Validator (FR-014).
+    Kein Eingriff in `PlatformProtocol.create()`/`SecurityConfig`/generische Klassen. Details: PROGRESS.md,
+    „Rank-Management-Backend — siebtes Feature". Verschoben: Audit-/History-**Lesen**, Letzter-Admin-Schutz,
+    Absicherung des alten `/api/permission/**`-Pfads, Frontend (Next.js).
 
 ### Kategorien-Legende
 - **DATA-CENTRIC** = lebt von persistenten Daten → Backend wird Source of Truth (Domäne + Persistenz + REST + ggf. Pub-Sub).
