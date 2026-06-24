@@ -1,5 +1,8 @@
 package com.mcplatform.api.rest;
 
+import com.mcplatform.application.webauth.port.InvalidCredentialsException;
+import com.mcplatform.application.webauth.port.RefreshTokenInvalidException;
+import com.mcplatform.application.webauth.port.RefreshTokenReuseException;
 import com.mcplatform.application.webauth.port.TokenInvalidException;
 import com.mcplatform.application.webauth.port.WebAccountConflictException;
 import com.mcplatform.application.webauth.port.WebAccountExistsException;
@@ -55,5 +58,25 @@ public class WebAuthExceptionHandler {
     @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
     public Map<String, String> cooldown(WebAuthCooldownException e) {
         return Map.of("error", "web_auth_cooldown", "message", e.getMessage());
+    }
+
+    // --- JWT-login-session (slice 004): 401s. Uniform messages — no user/credential enumeration. ---
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public Map<String, String> invalidCredentials(InvalidCredentialsException e) {
+        return Map.of("error", "web_auth_invalid_credentials", "message", "invalid credentials");
+    }
+
+    @ExceptionHandler(RefreshTokenInvalidException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public Map<String, String> refreshInvalid(RefreshTokenInvalidException e) {
+        return Map.of("error", "web_auth_refresh_invalid", "message", "refresh token invalid");
+    }
+
+    @ExceptionHandler(RefreshTokenReuseException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public Map<String, String> refreshReuse(RefreshTokenReuseException e) {
+        return Map.of("error", "web_auth_session_revoked", "message", "session revoked");
     }
 }

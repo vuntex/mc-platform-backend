@@ -33,4 +33,25 @@ class WebAuthEndpointsTest {
         assertThat(WebAuthEndpoints.REQUEST_LINK.responseType()).isEqualTo(TokenResponse.class);
         assertThat(WebAuthEndpoints.REQUEST_RESET.responseType()).isEqualTo(TokenResponse.class);
     }
+
+    @Test
+    void loginIsFlatWithCredentialsAndTokenPair() {
+        assertThat(WebAuthEndpoints.LOGIN.expand()).isEqualTo("/api/web-auth/login");
+        assertThat(WebAuthEndpoints.LOGIN.method()).isEqualTo(HttpMethod.POST);
+        assertThat(WebAuthEndpoints.LOGIN.requestType()).isEqualTo(LoginRequest.class);
+        assertThat(WebAuthEndpoints.LOGIN.responseType()).isEqualTo(TokenPairResponse.class);
+    }
+
+    @Test
+    void refreshAndLogoutAreFlatCookieDriven() {
+        assertThat(WebAuthEndpoints.REFRESH.expand()).isEqualTo("/api/web-auth/session/refresh");
+        assertThat(WebAuthEndpoints.REFRESH.method()).isEqualTo(HttpMethod.POST);
+        assertThat(WebAuthEndpoints.REFRESH.requestType()).isEqualTo(Void.class);
+        assertThat(WebAuthEndpoints.REFRESH.responseType()).isEqualTo(TokenPairResponse.class);
+
+        assertThat(WebAuthEndpoints.LOGOUT.expand()).isEqualTo("/api/web-auth/session/logout");
+        assertThat(WebAuthEndpoints.LOGOUT.method()).isEqualTo(HttpMethod.POST);
+        assertThat(WebAuthEndpoints.LOGOUT.requestType()).isEqualTo(Void.class);
+        assertThat(WebAuthEndpoints.LOGOUT.responseType()).isEqualTo(Void.class);
+    }
 }

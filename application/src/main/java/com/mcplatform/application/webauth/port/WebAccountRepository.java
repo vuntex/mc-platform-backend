@@ -1,7 +1,9 @@
 package com.mcplatform.application.webauth.port;
 
 import com.mcplatform.domain.player.PlayerId;
+import com.mcplatform.domain.webauth.WebAccount;
 import java.time.Instant;
+import java.util.Optional;
 
 /**
  * Outbound port for the state-stored web account. Implemented by the jOOQ adapter. The atomic
@@ -12,6 +14,9 @@ public interface WebAccountRepository {
 
     /** Whether a web account already exists for this identity. */
     boolean exists(PlayerId playerUuid);
+
+    /** The web account for this identity, if one exists (login reads the password hash). Read-only. */
+    Optional<WebAccount> find(PlayerId playerUuid);
 
     /**
      * Redeem a raw token in ONE transaction: look up the matching unexpired token (FOR UPDATE), apply the

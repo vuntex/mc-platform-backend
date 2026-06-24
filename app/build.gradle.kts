@@ -26,12 +26,21 @@ dependencies {
     // implementation, wired in WebAuthConfig. Kept here (not in infra-persistence) to keep that module
     // Spring-free.
     implementation(libs.spring.security.crypto)
+    // jjwt — HS256 access tokens. API on the compile path; impl + jackson at runtime. Confined to :app
+    // (behind TokenIssuer/TokenVerifier) so core-domain/application/api-rest stay JWT-free (plan R1/R4).
+    implementation(libs.jjwt.api)
+    runtimeOnly(libs.jjwt.impl)
+    runtimeOnly(libs.jjwt.jackson)
     // Redis runs through the framework-free infra-cache adapter (Lettuce), wired in CacheConfig.
     // No spring-boot-starter-data-redis: a single Redis connection path, no second Lettuce pool.
 
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.junit)
+    // The E2E slice test writes a secured probe controller (@AuthenticationPrincipal) and exercises the
+    // real security chain — Spring Security is needed on the TEST classpath only (production app pulls it
+    // transitively from :api-rest at runtime; it is not a direct production dependency of :app).
+    testImplementation(libs.spring.boot.starter.security)
 }
 
 configurations.all {

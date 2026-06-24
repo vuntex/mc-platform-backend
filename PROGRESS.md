@@ -964,3 +964,83 @@ Mechanismus. Die laufende JWT-Login-Session bleibt ein **separater Folge-Slice**
 ### Offen / später (separater Plugin-Repo `mc-platform-plugin`)
 - `feature.web`-Modul: `/web link`/`resetPassword` über `BackendClient` → `WebAuthEndpoints`, klickbarer
   Adventure-Link aus `TokenResponse.token`. Danach: JWT-Login-Session-Slice, `/web unlink`-Slice.
+
+---
+
+## JWT-Login-Session — sechstes Feature (state-stored, Stand: 2026-06-24)
+
+**Backend-seitig komplett gebaut, `./gradlew build` grün.** Folge-Slice der Web-Auth-Bridge: die laufende
+Web-Login-Session. Ein Spieler mit `web_account` loggt sich im Webinterface mit aktuellem MC-Namen + Passwort
+ein und erhält ein **stateless Access-JWT** (HS256, Subject = player_uuid, **nur Identität**) plus ein
+**state-stored, rotierendes Refresh-Token**. Spec/Plan/Artefakte: `specs/004-jwt-login-session/`. Branch
+`004-jwt-login-session`.
+
+### Besonderheiten / Entscheidungen
+- **State-stored** (Bridge-/Reports-Muster), nicht event-sourced: Session ist ein Identitäts-/Sitzungsdatum.
+  Eine Tabelle `refresh_token` (Flyway **V12**; V10/V11 vom Permission-/Bridge-Feature belegt).
+- **Access-JWT zustandslos** — gar nicht persistiert. Nur das Refresh-Token ist state-stored, **nie im
+  Klartext** (SHA-256-Hash at rest, reused `JooqLinkTokenRepository.sha256Hex`).
+- **Autorisierung ausschließlich über `PermissionResolver`** (kein zweiter Pfad): der JWT trägt keine
+  Rollen/Authorities; die Security-Chain vergibt leere Authorities, Rechte kommen pro Request aus dem Resolver.
+- **Kein neues `infra-security`-Modul:** JWT-Port (`TokenIssuer`/`TokenVerifier`) in `application`, jjwt-Impl
+  (`JwtTokenService`, HS256, Secret aus Env) im `app`-Composition-Root (spiegelt die BCrypt-Impl der Bridge),
+  Filter + `SecurityFilterChain` in `api-rest` (sehen nur den `TokenVerifier`-Port — jjwt bleibt aus api-rest).
+- **Rotation strikt:** Refresh entwertet das alte Token in EINER TX (`rotated_at`-Marker, nicht Löschen) und
+  stellt ein neues aus; Replay eines bereits rotierten Tokens = Diebstahls-Signal → **alle** Refresh-Tokens der
+  player_uuid werden invalidiert (kein Familien-Feld). Logout löscht das vorgelegte Token (idempotent).
+- **Passwort-Reset (Bridge, D4):** `JooqWebAccountRepository.resetPassword` löscht zusätzlich **alle**
+  Refresh-Tokens des Spielers in derselben TX (atomar; einziger Eingriff in bestehenden Bridge-Code).
+- **Token-Transport:** Access im JSON-Body (+ `Authorization: Bearer`), Refresh als httpOnly/Secure/
+  SameSite=Strict-Cookie (`Path=/api/web-auth/session`), **nie** im Body. CORS: explizite Allowed-Origin +
+  credentials; CSRF global aus (stateless Bearer-API), Refresh/Logout zusätzlich per `X-Refresh`-Header geschützt.
+
+### Domäne (`core-domain/webauth`, framework-frei, JWT-frei)
+- `RefreshToken` (Wertobjekt: tokenHash, playerUuid, createdAt, expiresAt, rotatedAt, rotatedFrom) mit
+  `isExpired`/`isActive`/`isConsumed`. Reused: `PasswordHasher`/`TokenGenerator`/`WebAccount` aus der Bridge.
+
+### Application (`application/webauth`)
+- Ports `TokenIssuer`/`TokenVerifier` (JWT als Port), `RefreshTokenRepository` (+ sealed `RotateResult`
+  Rotated/Invalid/Replay). `WebSessionService` (login/refresh/logout). Additive Port-Methoden:
+  `PlayerRepository.findUuidByName` (Name→UUID, jüngster last_seen) + `WebAccountRepository.find`. Einheitliche
+  `InvalidCredentialsException` (kein Name-vs-Passwort-/Account-Leak, D3).
+
+### Persistenz (`infra-persistence`, jOOQ, Flyway V12)
+- `JooqRefreshTokenRepository`: `store` (+ Audit `LOGIN`), atomares `rotate` (`FOR UPDATE` → rotated/replay/
+  invalid; Replay löscht alle Player-Tokens + Audit `TOKEN_REUSE_DETECTED`; Erfolg Audit `TOKEN_ROTATED`),
+  `deleteByRawToken` (Logout, Audit `LOGOUT`), `deleteAllForPlayer`, `purgeExpired`. Audit reused den
+  `web_auth_audit`-Trail (free-text `event_type`, nie Token/Hash). `JooqPlayerRepository.findUuidByName`,
+  `JooqWebAccountRepository.find` + D4-Purge ergänzt.
+
+### REST/Security (`api-rest`) + app
+- `JwtAuthenticationFilter` (Bearer → `TokenVerifier`-Port → SecurityContext-Principal = PlayerId, leere
+  Authorities), `SecurityConfig` (stateless, csrf off, `/api/web/**` authenticated, **anyRequest permitAll** →
+  Alt-Endpoints unberührt, CORS-Bean). `WebSessionController` (login/refresh/logout, Cookie-Handling,
+  `X-Refresh`-Guard). `WebAuthExceptionHandler` um 401 erweitert (`web_auth_invalid_credentials`/
+  `web_auth_refresh_invalid`/`web_auth_session_revoked`). app: `JwtTokenService` (jjwt), `WebSessionConfig`,
+  `WebRefreshTokenPurge` (`@Scheduled`), `PersistenceConfig`-Bean. Config: `mcplatform.webauth.{jwt.secret,
+  access-ttl-minutes:15, refresh-ttl-days:30, cors.allowed-origin, refresh-cookie.*}`.
+
+### protocol (`plugin-protocol.webauth`, JDK-only → Maven Local)
+- DTOs `LoginRequest`, `TokenPairResponse` (**ohne** refreshToken-Feld — Refresh nur im Cookie); `WebAuthEndpoints`
+  um `LOGIN`/`REFRESH`/`LOGOUT` erweitert. **Kein** Codec/Channel, **`PlatformProtocol.create()` unangetastet**
+  (verifiziert), POM weiterhin ohne `<dependencies>`. `publishToMavenLocal` ausgeführt.
+
+### Tests grün
+- Domain `RefreshTokenTest`. Application `WebSessionServiceTest` (Login-Erfolg/uniformer Fehler ×3,
+  Refresh-Rotation/Invalid/Replay, Logout idempotent, Fakes + fixer Clock). jOOQ/Testcontainers
+  `JooqRefreshTokenRepositoryTest` (store/rotate/replay-kill/expired/logout/purge + Audit-Asserts),
+  `JooqPlayerRepositoryTest` (findUuidByName), `JooqWebAccountRepositoryTest` (find + **D4** Reset killt Sessions).
+  `JwtTokenServiceTest` (Roundtrip/Expiry/Tamper/short-secret). Protocol `WebAuthEndpointsTest`. E2E
+  `WebLoginSliceTest` (Login→geschützter `/api/web/**` 200/401/401, Refresh→Rotation, Replay→Kette tot,
+  Logout, uniformer 401, CSRF 403, JSON-Contract ohne refreshToken, SC-007). `@JsonTest` DTO-Contract.
+  **Alle bestehenden Slices unverändert grün** (Security-Chain permittiert Alt-Endpoints).
+
+### Bewusste Grenzen / verschoben
+- **Kein Brute-Force-Schutz** in diesem Slice (FR-021, dokumentierte Lücke — später/Reverse-Proxy). Keine
+  Access-Token-Sofort-Revocation/Blacklist (kurze TTL = Fenster), kein „alle Geräte abmelden", kein RS256,
+  kein OAuth/E-Mail, kein Plugin-Anteil. SC-006 (Rechte-Änderung ohne Re-Login) hier nur **negativ** belegt
+  (JWT ohne Authority-Claims); volle Prüfung im Web-Feature-Slice (6). Onboarding-Hinweis „kein Account →
+  /web link" bewusst NICHT über die Login-Antwort (D3).
+- **Keine generische Klasse geändert**; einziger Eingriff in Bestand: additive D4-Zeile in
+  `JooqWebAccountRepository.resetPassword`. Neue Deps modul-konform: jjwt nur in `app`, spring-security nur in
+  `api-rest`.

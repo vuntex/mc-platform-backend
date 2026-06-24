@@ -32,8 +32,15 @@
     Vorgänger (das alte System hatte nur onlinegems/onlinemoney-Webshop-Hinweise, keine Account-Bindung).
     Spieler verbindet ingame seine UUID mit einem Web-Account (`/web link`/`resetPassword` → kurzlebiger
     Single-use-Token in der DB → Passwort im Web). State-stored, kein Live-Pfad, BCrypt hinter Port.
-    Details: PROGRESS.md, „Web-Auth-Bridge — fünftes Feature". Verschoben: JWT-Login-Session, `/web unlink`,
+    Details: PROGRESS.md, „Web-Auth-Bridge — fünftes Feature". Verschoben: `/web unlink`,
     Plugin-`feature.web` (separates Repo).
+  - ✅ **JWT-Login-Session gebaut (Greenfield-Infra, Branch `004-jwt-login-session`):** Folge-Slice der
+    Bridge. Web-Login mit MC-Name + Passwort → stateless Access-JWT (HS256, nur Identität) + rotierendes,
+    state-stored Refresh-Token (gehasht, Replay killt die Kette; Passwort-Reset killt alle Sessions).
+    Autorisierung weiter ausschließlich über `PermissionResolver`; JWT-Filter + SecurityFilterChain in
+    api-rest, jjwt nur in app, `PlatformProtocol.create()` unangetastet. Details: PROGRESS.md,
+    „JWT-Login-Session — sechstes Feature". Verschoben: Brute-Force-Schutz, „alle Geräte abmelden",
+    Web-Feature-Endpoints (Slice 6), `/web unlink`.
 
 ### Kategorien-Legende
 - **DATA-CENTRIC** = lebt von persistenten Daten → Backend wird Source of Truth (Domäne + Persistenz + REST + ggf. Pub-Sub).

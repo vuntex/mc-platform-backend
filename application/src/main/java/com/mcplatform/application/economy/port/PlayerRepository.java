@@ -2,12 +2,20 @@ package com.mcplatform.application.economy.port;
 
 import com.mcplatform.domain.player.PlayerId;
 import java.time.Instant;
+import java.util.Optional;
 
 /** Outbound port for player master data (state-stored CRUD; implemented by infra-persistence). */
 public interface PlayerRepository {
 
     /** Insert or update the player row, refreshing the cached name and last_seen. */
     void save(PlayerId player, String name, Instant seenAt);
+
+    /**
+     * Resolve a current Minecraft name to a UUID, case-insensitively ({@code LOWER(name)}). On ambiguity
+     * (a name reused across players over time) the row with the most recent {@code last_seen} wins — the
+     * rule fixed in the web-auth bridge, implemented here for the login slice.
+     */
+    Optional<PlayerId> findUuidByName(String name);
 
     /**
      * Atomic, idempotent session-join upsert: insert the player (first_seen/created_at default to now),

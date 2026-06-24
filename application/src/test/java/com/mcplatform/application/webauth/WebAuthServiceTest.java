@@ -157,6 +157,11 @@ class WebAuthServiceTest {
         }
 
         @Override
+        public java.util.Optional<com.mcplatform.domain.webauth.WebAccount> find(PlayerId playerUuid) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
         public RedeemOutcome redeem(String rawToken, String passwordHash, Instant now) {
             redeemCalls++;
             lastRawToken = rawToken;

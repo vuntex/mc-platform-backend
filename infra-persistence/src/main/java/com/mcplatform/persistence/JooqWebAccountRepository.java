@@ -1,5 +1,6 @@
 package com.mcplatform.persistence;
 
+import static com.mcplatform.persistence.jooq.Tables.REFRESH_TOKEN;
 import static com.mcplatform.persistence.jooq.Tables.WEB_ACCOUNT;
 import static com.mcplatform.persistence.jooq.Tables.WEB_AUTH_AUDIT;
 import static com.mcplatform.persistence.jooq.Tables.WEB_LINK_TOKEN;
@@ -10,9 +11,11 @@ import com.mcplatform.application.webauth.port.WebAccountConflictException;
 import com.mcplatform.application.webauth.port.WebAccountRepository;
 import com.mcplatform.domain.player.PlayerId;
 import com.mcplatform.domain.webauth.TokenPurpose;
+import com.mcplatform.domain.webauth.WebAccount;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -40,6 +43,23 @@ public final class JooqWebAccountRepository implements WebAccountRepository {
     public boolean exists(PlayerId playerUuid) {
         return dsl.fetchExists(
                 dsl.selectFrom(WEB_ACCOUNT).where(WEB_ACCOUNT.PLAYER_UUID.eq(playerUuid.value())));
+    }
+
+    @Override
+    public Optional<WebAccount> find(PlayerId playerUuid) {
+        Record r = dsl.select(WEB_ACCOUNT.PLAYER_UUID, WEB_ACCOUNT.PASSWORD_HASH,
+                        WEB_ACCOUNT.CREATED_AT, WEB_ACCOUNT.PASSWORD_UPDATED_AT)
+                .from(WEB_ACCOUNT)
+                .where(WEB_ACCOUNT.PLAYER_UUID.eq(playerUuid.value()))
+                .fetchOne();
+        if (r == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new WebAccount(
+                PlayerId.of(r.get(WEB_ACCOUNT.PLAYER_UUID)),
+                r.get(WEB_ACCOUNT.PASSWORD_HASH),
+                r.get(WEB_ACCOUNT.CREATED_AT).toInstant(),
+                r.get(WEB_ACCOUNT.PASSWORD_UPDATED_AT).toInstant()));
     }
 
     @Override
@@ -97,6 +117,10 @@ public final class JooqWebAccountRepository implements WebAccountRepository {
         if (updated == 0) {
             throw new WebAccountConflictException("no web account for this identity");
         }
+        // D4 (slice 004): a password reset ends all sessions — invalidate every refresh token of this
+        // player in the SAME transaction as the password change (atomic; no window where an old session
+        // survives a reset). Additive touchpoint; the rest of the bridge redeem path is unchanged.
+        tx.deleteFrom(REFRESH_TOKEN).where(REFRESH_TOKEN.PLAYER_UUID.eq(playerUuid)).execute();
         audit(tx, playerUuid, EVENT_PASSWORD_RESET, ts);
         return RedeemOutcome.RESET_DONE;
     }

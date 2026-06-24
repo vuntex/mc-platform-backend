@@ -1,5 +1,6 @@
 package com.mcplatform.persistence;
 
+import static com.mcplatform.persistence.jooq.Tables.REFRESH_TOKEN;
 import static com.mcplatform.persistence.jooq.Tables.WEB_ACCOUNT;
 import static com.mcplatform.persistence.jooq.Tables.WEB_AUTH_AUDIT;
 import static com.mcplatform.persistence.jooq.Tables.WEB_LINK_TOKEN;
@@ -11,7 +12,9 @@ import com.mcplatform.application.webauth.port.TokenInvalidException;
 import com.mcplatform.application.webauth.port.WebAccountConflictException;
 import com.mcplatform.domain.player.PlayerId;
 import com.mcplatform.domain.webauth.TokenPurpose;
+import com.mcplatform.domain.webauth.WebAccount;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -35,6 +38,7 @@ class JooqWebAccountRepositoryTest {
     static JooqWebAccountRepository accounts;
     static JooqLinkTokenRepository tokens;
     static JooqPlayerRepository players;
+    static JooqRefreshTokenRepository refreshTokens;
 
     private final Instant now = Instant.parse("2026-06-24T12:00:00Z");
 
@@ -49,6 +53,7 @@ class JooqWebAccountRepositoryTest {
         accounts = new JooqWebAccountRepository(dsl);
         tokens = new JooqLinkTokenRepository(dsl);
         players = new JooqPlayerRepository(dsl);
+        refreshTokens = new JooqRefreshTokenRepository(dsl);
     }
 
     private PlayerId newPlayer() {
@@ -142,5 +147,37 @@ class JooqWebAccountRepositoryTest {
 
         assertThatThrownBy(() -> accounts.redeem("raw-expired", "hash", now))
                 .isInstanceOf(TokenInvalidException.class);
+    }
+
+    @Test
+    void findReturnsAccountWithHashOrEmpty() {
+        PlayerId p = newPlayer();
+        assertThat(accounts.find(p)).isEmpty();
+
+        tokens.issue("find-link", p, TokenPurpose.LINK, now.plusSeconds(600), now);
+        accounts.redeem("find-link", "the-hash", now);
+
+        Optional<WebAccount> found = accounts.find(p);
+        assertThat(found).isPresent();
+        assertThat(found.get().playerUuid()).isEqualTo(p);
+        assertThat(found.get().passwordHash()).isEqualTo("the-hash");
+    }
+
+    @Test
+    void passwordResetInvalidatesAllRefreshTokensOfThePlayer() {
+        // D4: a RESET redeem must delete every refresh token of the player in the same transaction.
+        PlayerId p = newPlayer();
+        tokens.issue("d4-link", p, TokenPurpose.LINK, now.plusSeconds(600), now);
+        accounts.redeem("d4-link", "old-hash", now);
+        // two live sessions for this player
+        refreshTokens.store("d4-rt-1", p, now, now.plusSeconds(86400));
+        refreshTokens.store("d4-rt-2", p, now, now.plusSeconds(86400));
+        assertThat(dsl.fetchCount(REFRESH_TOKEN, REFRESH_TOKEN.PLAYER_UUID.eq(p.value()))).isEqualTo(2);
+
+        tokens.issue("d4-reset", p, TokenPurpose.RESET, now.plusSeconds(600), now);
+        accounts.redeem("d4-reset", "new-hash", now.plusSeconds(10));
+
+        assertThat(dsl.fetchCount(REFRESH_TOKEN, REFRESH_TOKEN.PLAYER_UUID.eq(p.value()))).isZero();
+        assertThat(audits(p, "PASSWORD_RESET")).isEqualTo(1);
     }
 }
