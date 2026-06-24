@@ -23,6 +23,9 @@ spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-start
 spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
 spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+# BCrypt for the web-auth bridge. Standalone crypto lib (no Spring context needed); version managed by
+# the Spring Boot BOM. Lives only in :app so infra-persistence stays Spring-free.
+spring-security-crypto = { module = "org.springframework.security:spring-security-crypto" }
 
 jooq = { module = "org.jooq:jooq", version.ref = "jooq" }
 flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }

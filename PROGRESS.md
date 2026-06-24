@@ -879,3 +879,88 @@ Baut die minimale `JooqPermissionResolver`-Implementierung (vorher: `team_role_m
   (`publishToMavenLocal` erneut). `PermissionChangedEvent` trägt **keine** Darstellung (Plugin lädt
   `/effective` nach), daher kein Codec-/Golden-Wire-Eingriff nötig. Tests: `RoleDisplayIconTest` +
   DTO-Roundtrip/Display in `PermissionVerticalSliceTest`.
+
+---
+
+## Web-Auth-Bridge — fünftes Feature (state-stored, Stand: 2026-06-24)
+
+**Backend-seitig komplett gebaut, `./gradlew build` grün.** Erste **Greenfield-Infrastruktur fürs
+Webinterface** (kein Altplugin-Import). Ein Spieler verbindet ingame seine Minecraft-Identität (UUID)
+mit einem Web-Account: `/web link` erzeugt einen kurzlebigen, einmal verwendbaren Token (als klickbarer
+Link), im Web setzt der Spieler ein Passwort; `/web resetPassword` ist Recovery über denselben
+Mechanismus. Die laufende JWT-Login-Session bleibt ein **separater Folge-Slice**. Spec/Plan/Artefakte:
+`specs/003-web-auth-bridge/`. Branch `003-web-auth-bridge`.
+
+### Besonderheiten gegenüber den bisherigen Features
+- **State-stored** (Reports-Muster), nicht event-sourced: ein Web-Account ist Identitäts-/Config-Datum.
+  Tabellen `web_account` + `web_link_token` + append-only `web_auth_audit` (Flyway **V11**;
+  V9/V10 waren vom Permission-Feature belegt).
+- **Erstes Feature ohne Live-Pfad:** kein Redis/Pub-Sub, **kein** `MessageCodec`/`Channel` →
+  `PlatformProtocol.create()` bleibt **byte-identisch** (verifiziert). Der einzige geteilte
+  Contract-Zuwachs sind rein datentragende, **neue** Klassen (`WebAuthEndpoints`, `TokenResponse`,
+  `RedeemRequest`).
+- **Kein Permission-Gate** in diesem Slice: Self-Service (der Server-Login beweist die Identität).
+  `/web unlink` bewusst verschoben (Konto-Management-Slice).
+
+### Domäne (`core-domain/webauth`, framework-frei)
+- `WebAccount` (state-stored record), `LinkToken` (`isExpired(now)`), `TokenPurpose` (LINK|RESET),
+  `PasswordPolicy` (8..64 Zeichen, 64er-Grenze unter der 72-Byte-BCrypt-Schranke → kein stilles
+  Abschneiden), Ports `PasswordHasher` (hash/matches) + `TokenGenerator`, `InvalidPasswordException`.
+- **Passwort-Hashing als Port:** BCrypt-Impl liegt im `app`-Modul (spring-security-crypto), **nicht** in
+  `infra-persistence` — das bleibt Spring-frei. core-domain sieht nie BCrypt.
+
+### Persistenz (`infra-persistence`, jOOQ, Flyway V11)
+- `JooqLinkTokenRepository`: `issue` = `DELETE WHERE (uuid,purpose)` → `INSERT` in **einer** TX
+  (höchstens ein aktiver Token je (uuid,purpose), `uq_web_link_token_uuid_purpose`); `lastCreatedAt`
+  (Cooldown-Anchor); `deleteExpired` (Hygiene). **Token-at-rest = SHA-256-Hash** des Rohtokens
+  (`token_hash` PK) — ein DB-Read-Leak liefert keinen einlösbaren Token; SHA-256 reicht (Token ≥128 Bit,
+  kein Salt/Slow-Hash nötig), reines JDK → keine neue Dependency in infra.
+- `JooqWebAccountRepository`: `exists`; **atomarer `redeem` in einer TX** (FR-018): `SELECT … FOR UPDATE`
+  auf die unexpired Token-Zeile → LINK `INSERT … ON CONFLICT DO NOTHING` (0 → 409) bzw. RESET
+  `UPDATE … WHERE player_uuid` (0 → 409) → Token-`DELETE` (single-use) → `web_auth_audit`-INSERT
+  (`ACCOUNT_CREATED`/`PASSWORD_RESET`, nie Passwort/Hash). **Kein** `version`/OCC: pro Account schreibt
+  nur der Eigentümer-Redeem; der `FOR UPDATE` auf der einzelnen Token-Zeile serialisiert konkurrierende
+  Redeems desselben Tokens.
+
+### Application (`application/webauth`)
+- `WebAuthService`: `requestLinkToken` (Vorbedingung kein Account → 409, Cooldown → 429),
+  `requestResetToken` (Vorbedingung Account → 409, Cooldown), `redeem` (Policy-Check → hash → atomarer
+  Repo-Redeem). Ports `WebAccountRepository`/`LinkTokenRepository`, `TokenResult`, Exceptions
+  (Exists/Missing/Conflict/TokenInvalid/Cooldown). Cooldown via `Clock` + `Duration` (Reports-Muster).
+
+### REST (`api-rest`) + app
+- `WebAuthController`: `POST /api/players/{uuid}/web-auth/link-token` & `.../reset-token` (Plugin),
+  `POST /api/web-auth/redeem` (Web, 204). `WebAuthExceptionHandler`: 409 `web_account_exists`/
+  `_missing`/`_conflict`, **410** `web_auth_token_invalid` (uniform — leakt keine Existenz), 422
+  `password_invalid`, 429 `web_auth_cooldown`; **400 bewusst nicht re-deklariert**. `WebAuthMapper`
+  (Domain↔DTO). `WebAuthConfig` (Beans, Cooldown/TTL aus Config, bestehende `Clock`-Bean),
+  `PersistenceConfig` +2 Repo-Beans, optionaler `WebLinkTokenPurge` (`@Scheduled` über die bestehende
+  `@EnableScheduling` — Hygiene, nicht sicherheitskritisch). Config: `mcplatform.webauth.token-ttl-minutes`
+  (10), `token-cooldown-seconds` (60), `purge-interval-ms`.
+
+### Protocol (`plugin-protocol.webauth`, JDK-only → Maven Local)
+- `TokenResponse` (token, purpose, expiresAtEpochMilli — **nie** Hash/email), `RedeemRequest`
+  (token, password), `WebAuthEndpoints` (REQUEST_LINK/REQUEST_RESET/REDEEM via `EndpointDescriptor`).
+  **Kein** Codec/Channel. POM weiterhin ohne `<dependencies>`; `publishToMavenLocal` ausgeführt.
+
+### Tests grün
+- Domain: `PasswordPolicyTest`, `LinkTokenTest`. Application (Fakes): `WebAuthServiceTest`
+  (Vorbedingungen, Cooldown, Redeem LINK/RESET, Single-use, Token-invalid/Conflict, **kein Klartext**).
+  jOOQ/Testcontainers: `JooqLinkTokenRepositoryTest` (DELETE-vor-INSERT, expires_at, deleteExpired,
+  SHA-256-Roundtrip, FK), `JooqWebAccountRepositoryTest` (atomarer Redeem LINK/RESET, Replay→410,
+  expired→410, Konflikte). Protocol (rein-JDK): `WebAuthEndpointsTest`. E2E (`app`):
+  `WebAuthVerticalSliceTest` (link→redeem→BCrypt-Account ohne Klartext, 409/410/422/429, Reset-Flow,
+  JSON-Contract ohne Hash/email). Bestehende Slices unverändert grün.
+
+### Bewusste Grenzen / Abgrenzung
+- Kein JWT-Login (Folge-Slice), keine E-Mail/E-Mail-Recovery, kein Redis/Pub-Sub, kein `/web unlink`
+  (Q1, Konto-Management-Slice), keine Rollen-/Rechte-UI. Name→UUID-Auflösung (`LOWER(name)` + jüngster
+  `last_seen`, nutzt `idx_player_name_lower`) ist als Regel fixiert, aber **erst im Login-Slice**
+  implementiert — dieser Slice braucht sie nicht (Command kennt die UUID).
+- **Keine generische Klasse geändert** außer additiven Anstech-Punkten (PersistenceConfig-Beans,
+  neue WebAuthConfig, neue protocol-Klassen). Erste Krypto-Dependency (`spring-security-crypto`) — nur
+  im `app`-Modul, hinter dem `PasswordHasher`-Port.
+
+### Offen / später (separater Plugin-Repo `mc-platform-plugin`)
+- `feature.web`-Modul: `/web link`/`resetPassword` über `BackendClient` → `WebAuthEndpoints`, klickbarer
+  Adventure-Link aus `TokenResponse.token`. Danach: JWT-Login-Session-Slice, `/web unlink`-Slice.

@@ -26,8 +26,14 @@
     LuckPerms-gekoppelte Autoritätsmodell ist durch ein backend-autoritatives Permission-/Rank-System
     hinter dem `PermissionResolver`-Port ersetzt (flache Rollen, mehrere Rang-Grants mit Ablauf,
     additive Wildcard-Auflösung, Live-Entzug via `mc:permission:changed`). Details: PROGRESS.md,
-    Abschnitt „Permissions/Ranks — viertes Feature". Die Web-Login↔UUID-Verknüpfung bleibt späteres
-    Auth-Feature; das Permission-Modell ist bereits einheitlich (eine Welt, kein zweites Authority-Enum).
+    Abschnitt „Permissions/Ranks — viertes Feature". Das Permission-Modell ist bereits einheitlich
+    (eine Welt, kein zweites Authority-Enum).
+  - ✅ **Web-Auth-Bridge gebaut (Greenfield-Infra, Branch `003-web-auth-bridge`):** Kein Altplugin-
+    Vorgänger (das alte System hatte nur onlinegems/onlinemoney-Webshop-Hinweise, keine Account-Bindung).
+    Spieler verbindet ingame seine UUID mit einem Web-Account (`/web link`/`resetPassword` → kurzlebiger
+    Single-use-Token in der DB → Passwort im Web). State-stored, kein Live-Pfad, BCrypt hinter Port.
+    Details: PROGRESS.md, „Web-Auth-Bridge — fünftes Feature". Verschoben: JWT-Login-Session, `/web unlink`,
+    Plugin-`feature.web` (separates Repo).
 
 ### Kategorien-Legende
 - **DATA-CENTRIC** = lebt von persistenten Daten → Backend wird Source of Truth (Domäne + Persistenz + REST + ggf. Pub-Sub).
