@@ -2,6 +2,7 @@ package com.mcplatform.protocol;
 
 import com.mcplatform.protocol.core.MessageProtocol;
 import com.mcplatform.protocol.economy.BalanceChangedEventCodec;
+import com.mcplatform.protocol.permission.PermissionChangedEventCodec;
 import com.mcplatform.protocol.punishment.PunishmentChangedEventCodec;
 import com.mcplatform.protocol.report.ReportChangedEventCodec;
 
@@ -20,8 +21,9 @@ public final class PlatformProtocol {
         return new MessageProtocol(
                 BalanceChangedEventCodec.INSTANCE,
                 PunishmentChangedEventCodec.INSTANCE,
-                ReportChangedEventCodec.INSTANCE
-                // future feature codecs plug in here (cosmetics, permissions, stats, ...)
+                ReportChangedEventCodec.INSTANCE,
+                PermissionChangedEventCodec.INSTANCE
+                // future feature codecs plug in here (cosmetics, stats, ...)
         );
     }
 }

@@ -3,17 +3,23 @@ package com.mcplatform.bootstrap.config;
 import com.mcplatform.application.economy.port.CurrencyRepository;
 import com.mcplatform.application.economy.port.EconomyEventStore;
 import com.mcplatform.application.economy.port.PlayerRepository;
+import com.mcplatform.application.permission.port.GrantAuditPort;
+import com.mcplatform.application.permission.port.PlayerGrantRepository;
+import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.punishment.port.PunishmentEventStore;
 import com.mcplatform.application.punishment.port.PunishmentTemplateRepository;
 import com.mcplatform.application.report.port.ReportRepository;
 import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.persistence.JooqCurrencyRepository;
 import com.mcplatform.persistence.JooqEconomyRepository;
+import com.mcplatform.persistence.JooqGrantAuditRepository;
 import com.mcplatform.persistence.JooqPermissionResolver;
+import com.mcplatform.persistence.JooqPlayerGrantRepository;
 import com.mcplatform.persistence.JooqPlayerRepository;
 import com.mcplatform.persistence.JooqPunishmentRepository;
 import com.mcplatform.persistence.JooqPunishmentTemplateRepository;
 import com.mcplatform.persistence.JooqReportRepository;
+import com.mcplatform.persistence.JooqRoleRepository;
 import javax.sql.DataSource;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -66,5 +72,20 @@ public class PersistenceConfig {
     @Bean
     ReportRepository reportRepository(DSLContext dsl) {
         return new JooqReportRepository(dsl);
+    }
+
+    @Bean
+    RoleRepository roleRepository(DSLContext dsl) {
+        return new JooqRoleRepository(dsl);
+    }
+
+    @Bean
+    PlayerGrantRepository playerGrantRepository(DSLContext dsl) {
+        return new JooqPlayerGrantRepository(dsl);
+    }
+
+    @Bean
+    GrantAuditPort grantAuditPort(DSLContext dsl) {
+        return new JooqGrantAuditRepository(dsl);
     }
 }

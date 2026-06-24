@@ -791,3 +791,91 @@ statt Per-Player-Lock wie bei Punishments).
 - US-Erweiterungen: Lese-/Historien-Endpoint für abgeschlossene Reports, PN-Chat-Kontext (mit
   Datenschutz-Policy), Retention/Purge, optionale Referenz Report→Punishment. Plugin-Slice (Menü +
   EventBus-Anbindung an `mc:report:changed`).
+
+---
+
+## Permissions/Ranks — viertes Feature (Foundation, state-stored)
+
+Baut die minimale `JooqPermissionResolver`-Implementierung (vorher: `team_role_member` +
+`team_role_permission`, ein Rang/Spieler, read-only, kein Ablauf) hinter dem **unveränderten**
+`PermissionResolver`-Port zur vollständigen, einheitlichen Permission-Welt aus. **State-stored**
+(Reports-Muster), nicht event-sourced. Branch `002-permission-rank-system`.
+
+### Domain (`core-domain`, framework-frei)
+- `Role`/`RoleId`, `RoleGrant`/`PermissionGrant` (`isActive(now)`), `PermissionMatcher` (reine
+  Wildcard/Union-Regel: `*`, `feature.*`-Präfix, exakt, keine Negation), `EffectivePermissions.resolve`
+  (Union aktiver Rollen-Perms + Default-Fallback + direkte Grants), `RankDisplay` (Tie-Break
+  `team_rank`→`weight`→`RoleId`), `PermissionChangeType` (Domänen-Enum). Vollständig unit-getestet.
+
+### Application (`application/permission`)
+- Ports `RoleRepository`, `PlayerGrantRepository`, `GrantAuditPort`, `PermissionChangePublisher`
+  (Domänentyp — `application` bleibt `plugin-protocol`-frei).
+- `PermissionAdminService`: Rollen-CRUD + Rollen-Permission-Config + Grant/Revoke; **Permission-Check
+  VOR jedem Schreiben** (wie PunishmentService, Gate = derselbe Port); Upsert (max. 1 aktiver Grant je
+  `(uuid,role)`, permanent schlägt befristet); kaskadierendes Löschen (REVOKE je Halter + Audit);
+  Default-Rolle nicht lösch-/deaktivierbar.
+- `PermissionQueryService` (effektive Permissions + Anzeige), `GrantExpiryService` (Sweep: inaktiv +
+  EXPIRE-Audit mit SYSTEM-Sentinel + **ein Event je betroffener UUID**).
+
+### Persistenz (`infra-persistence`, Flyway **V9**)
+- Tabellen `role`, `role_permission`, `player_role_grant`, `player_permission_grant`, `grant_audit`
+  (Audit-Stil analog `config_audit`). `team_role_*` **abgelöst** — leere member-Tabelle, daher kein
+  Backfill; geseedete ADMIN(`*`)/MODERATOR-Permissions in `role_permission` migriert, DEFAULT-Rolle
+  (leer) angelegt.
+- `JooqPermissionResolver` **umgeschrieben** (Port-Signatur byte-identisch): eine CTE-Query, Union über
+  aktive Grants auf **aktive** Rollen (`role.active`, FR-007a) + Default-Fallback + direkte Grants,
+  Wildcard via `starts_with`, Aktivität gegen DB-`now()` → korrekt auch zwischen Scheduler-Ticks,
+  Resolver bleibt clock-frei. `JooqRoleRepository`, `JooqPlayerGrantRepository` (Upsert via
+  `ON CONFLICT`), `JooqGrantAuditRepository`.
+
+### REST (`api-rest`) + Live (`app`)
+- `PermissionController` (Rollen-CRUD, Rollen-Permission add/remove, Grant/Revoke Rolle+Permission,
+  `/effective`). `PermissionExceptionHandler`: 404 `role_not_found`, 409 `role_name_conflict` /
+  `default_role_protected`, 422 `permission_invalid` — **403/400 bewusst NICHT re-deklariert**.
+- `RedisPermissionEventPublisher` → `mc:permission:changed` (mappt Domänen-Enum → Wire-String).
+  `SchedulingConfig` (`@EnableScheduling`, erster Backend-Scheduler — Composition-Root) treibt den
+  Ablauf-Sweep (Default 30 s).
+
+### Protocol (`plugin-protocol`, JDK-only)
+- `PermissionChangedEvent` + `PermissionChangedEventCodec` (`permission.changed`, 3-Feld-Pipe-Wire,
+  Golden-Test gepinnt), `PermissionChannels.CHANGED = mc:permission:changed`, `PermissionEndpoints`,
+  DTOs (`RoleRequest`/`RoleResponse`/`Grant*Request`/`PlayerPermissionsResponse`/…). Codec in
+  `PlatformProtocol.create()` registriert — **der EINZIGE Eingriff in geteilten Code**. POM ohne
+  `<dependencies>`. `publishToMavenLocal` ausgeführt.
+
+### Geklärte Entscheidungen (Spec/Clarify)
+- Default-Rang = impliziter Fallback ohne Zeile · Anzeige-Tie-Break `team_rank`→`weight`→ID ·
+  Live-Ablauf = periodischer Scheduler + Pub/Sub · Akteur = UUID (+ SYSTEM-Sentinel für EXPIRE) ·
+  Rollen-Löschung kaskadiert · doppelter Grant = Upsert · Default-Rolle startet leer.
+
+### Tests grün
+- Domain: `PermissionMatcherTest`, `EffectivePermissionsTest`, `GrantActivityTest`, `RankDisplayTest`.
+  Application (Fakes): `PermissionAdminServiceTest` (403-Gate, Upsert, Kaskaden-REVOKE,
+  Default-Schutz), `GrantExpiryServiceTest` (Expire→inaktiv+Audit, ein Event je UUID).
+  jOOQ/Testcontainers: `JooqPermissionResolverTest` (Union, Ablauf via `now()`, Wildcard, deaktivierte
+  Rolle, Default-Fallback, ADMIN/MOD-Seeds erhalten). Protocol: `PermissionChangedEventCodecTest`.
+  E2E: `PermissionVerticalSliceTest` (Create+Config+Grant→`/effective`, 403, Default-Anzeige,
+  `mc:permission:changed`). **SC-001 bewiesen**: Punishment-/Report-Slices unverändert grün.
+
+### Bewusste Grenzen / Abgrenzung
+- Account-Verknüpfung Web-Login ↔ Minecraft-UUID NICHT enthalten (späteres Auth-Feature) — die
+  einheitliche Permission-Welt dockt dann transparent an. Plugin-/Menü-Seite separater Slice.
+  Kein Resolver-Cache (zwei kleine indexierte Queries; Live-Push existiert fürs Plugin-Cache).
+- **Keine generische Klasse geändert** außer der einen Codec-Zeile in `PlatformProtocol.create()`.
+  Neu im Composition-Root: `@EnableScheduling` (Sweep-Logik selbst framework-frei).
+
+### Nachtrag (additiv): Rollen-Display-Icon
+- Optionales `display_icon` (Flyway **V10**, `ALTER TABLE role ADD COLUMN`, nullable `VARCHAR(512)` —
+  V9 unangetastet) auf der flachen Rollen-Tabelle, neben `prefix`/`color`/`weight`. Backend speichert
+  einen **opaken** präfixierten String (`<type>:<payload>`, z. B. `material:DIAMOND_SWORD`,
+  `head-texture:<texture>`, `head-player:<uuid>`) und **interpretiert ihn NIE** — kein ItemStack/NBT/
+  Bukkit-Wissen; interpretiert wird nur im Plugin. Behandlung wie `prefix`/`color`: gespeichert,
+  durchgereicht, im `/effective`-Display mitgeliefert.
+- Grobe Domänen-Validierung in `RoleDisplayIcon` (core-domain, framework-frei, unit-getestet): null =
+  kein Icon; sonst nicht-leer, Form `<type>:<payload>` mit nicht-leerer Nutzlast und **bekanntem**
+  Präfix (Allowlist `material`/`head-texture`/`head-player`). Nutzlast bewusst NICHT geprüft. Neue
+  Icon-Typen = Allowlist erweitern, **keine** Schema-Änderung. Über denselben Rollen-Endpoint setzbar
+  (kein neuer Endpoint); als String in `RoleRequest`/`RoleResponse`/`RoleDisplay` ergänzt
+  (`publishToMavenLocal` erneut). `PermissionChangedEvent` trägt **keine** Darstellung (Plugin lädt
+  `/effective` nach), daher kein Codec-/Golden-Wire-Eingriff nötig. Tests: `RoleDisplayIconTest` +
+  DTO-Roundtrip/Display in `PermissionVerticalSliceTest`.
