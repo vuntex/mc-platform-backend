@@ -7,6 +7,9 @@ import com.mcplatform.domain.player.PlayerId;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 
@@ -43,5 +46,18 @@ public final class JooqPlayerRepository implements PlayerRepository {
                 .fetchOne()
                 .value1();
         return Boolean.TRUE.equals(inserted);
+    }
+
+    @Override
+    public Optional<PlayerId> findUuidByName(String name) {
+        // LOWER(name) matches idx_player_name_lower; on ambiguity the most recent last_seen wins
+        // (the rule fixed in the web-auth bridge).
+        UUID uuid = dsl.select(PLAYER.UUID)
+                .from(PLAYER)
+                .where(DSL.lower(PLAYER.NAME).eq(name.toLowerCase(Locale.ROOT)))
+                .orderBy(PLAYER.LAST_SEEN.desc())
+                .limit(1)
+                .fetchOne(PLAYER.UUID);
+        return Optional.ofNullable(uuid).map(PlayerId::of);
     }
 }

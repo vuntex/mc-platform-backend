@@ -9,6 +9,8 @@ import com.mcplatform.protocol.economy.TransferRequest;
 import com.mcplatform.protocol.economy.TransferResponse;
 import com.mcplatform.protocol.session.PlayerRequest;
 import com.mcplatform.protocol.session.SessionJoinResponse;
+import com.mcplatform.protocol.webauth.LoginRequest;
+import com.mcplatform.protocol.webauth.TokenPairResponse;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -67,6 +69,19 @@ class RestDtoJsonContractTest {
         assertThat(json.readTree(json.writeValueAsString(resp)).fieldNames()).toIterable()
                 .containsExactlyInAnyOrder("from", "to");
         assertThat(json.readValue(json.writeValueAsString(resp), TransferResponse.class)).isEqualTo(resp);
+    }
+
+    @Test
+    void webSessionDtosMatchBackendJson() throws Exception {
+        LoginRequest login = json.readValue("{\"username\":\"Vuntex\",\"password\":\"secret123\"}", LoginRequest.class);
+        assertThat(login).isEqualTo(new LoginRequest("Vuntex", "secret123"));
+
+        // TokenPairResponse carries the access token + expiries, but NEVER a refreshToken field.
+        TokenPairResponse pair = new TokenPairResponse("jwt-abc", 111L, 222L);
+        assertThat(json.readTree(json.writeValueAsString(pair)).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("accessToken", "accessExpiresAtEpochMilli", "refreshExpiresAtEpochMilli");
+        assertThat(json.writeValueAsString(pair)).doesNotContain("refreshToken");
+        assertThat(json.readValue(json.writeValueAsString(pair), TokenPairResponse.class)).isEqualTo(pair);
     }
 
     @Test

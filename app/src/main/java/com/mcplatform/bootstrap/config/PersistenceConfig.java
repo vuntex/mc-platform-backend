@@ -11,6 +11,7 @@ import com.mcplatform.application.punishment.port.PunishmentTemplateRepository;
 import com.mcplatform.application.report.port.ReportRepository;
 import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.application.webauth.port.LinkTokenRepository;
+import com.mcplatform.application.webauth.port.RefreshTokenRepository;
 import com.mcplatform.application.webauth.port.WebAccountRepository;
 import com.mcplatform.persistence.JooqCurrencyRepository;
 import com.mcplatform.persistence.JooqEconomyRepository;
@@ -21,6 +22,7 @@ import com.mcplatform.persistence.JooqPlayerRepository;
 import com.mcplatform.persistence.JooqPunishmentRepository;
 import com.mcplatform.persistence.JooqPunishmentTemplateRepository;
 import com.mcplatform.persistence.JooqLinkTokenRepository;
+import com.mcplatform.persistence.JooqRefreshTokenRepository;
 import com.mcplatform.persistence.JooqReportRepository;
 import com.mcplatform.persistence.JooqRoleRepository;
 import com.mcplatform.persistence.JooqWebAccountRepository;
@@ -101,5 +103,10 @@ public class PersistenceConfig {
     @Bean
     LinkTokenRepository linkTokenRepository(DSLContext dsl) {
         return new JooqLinkTokenRepository(dsl);
+    }
+
+    @Bean
+    RefreshTokenRepository refreshTokenRepository(DSLContext dsl) {
+        return new JooqRefreshTokenRepository(dsl);
     }
 }

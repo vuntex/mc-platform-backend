@@ -15,6 +15,9 @@ lettuce = "6.6.0.RELEASE"
 junit = "5.13.4"
 assertj = "3.27.7"
 testcontainers = "1.21.4"
+# jjwt: self-issued HS256 access tokens. Lives only in :app behind the TokenIssuer/TokenVerifier ports,
+# so core-domain/application/api-rest stay JWT-free (plan R1/R4).
+jjwt = "0.12.6"
 
 [libraries]
 spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
@@ -26,6 +29,13 @@ spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-star
 # BCrypt for the web-auth bridge. Standalone crypto lib (no Spring context needed); version managed by
 # the Spring Boot BOM. Lives only in :app so infra-persistence stays Spring-free.
 spring-security-crypto = { module = "org.springframework.security:spring-security-crypto" }
+# Spring Security (web filter chain + JWT auth filter). Lives only in :api-rest; version via the Boot BOM.
+spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security" }
+
+# jjwt (HS256 access tokens) — only in :app, behind the TokenIssuer/TokenVerifier ports.
+jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version.ref = "jjwt" }
+jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
+jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
 
 jooq = { module = "org.jooq:jooq", version.ref = "jooq" }
 flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }

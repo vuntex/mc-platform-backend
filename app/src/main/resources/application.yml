@@ -25,6 +25,19 @@ mcplatform:
     token-ttl-minutes: 10
     token-cooldown-seconds: 60
     purge-interval-ms: 3600000
+    # JWT-Login-Session (slice 004). Access = stateless HS256 (15 min); refresh = state-stored, rotating
+    # (30 days). The HS256 secret MUST come from the environment (never committed); the app fails fast if
+    # it is missing or shorter than 32 bytes. CORS allows exactly the web origin (credentialed cookie).
+    access-ttl-minutes: 15
+    refresh-ttl-days: 30
+    refresh-purge-interval-ms: 3600000
+    jwt:
+      secret: ${MCWEB_JWT_SECRET:}
+    cors:
+      allowed-origin: ${MCWEB_ORIGIN:http://localhost:3000}
+    refresh-cookie:
+      name: mcweb_refresh
+      path: /api/web-auth/session
 
 ---
 # Local development profile. Connection data comes from environment variables
@@ -53,3 +66,10 @@ spring:
       on-profile: test
   flyway:
     enabled: true
+
+mcplatform:
+  webauth:
+    jwt:
+      # Test-only HS256 key (NOT a real secret) so the context loads under @ActiveProfiles("test").
+      secret: test-only-hs256-secret-key-at-least-32-bytes-1234567890
+

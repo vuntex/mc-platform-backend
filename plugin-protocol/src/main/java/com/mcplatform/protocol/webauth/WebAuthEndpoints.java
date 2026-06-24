@@ -27,5 +27,20 @@ public final class WebAuthEndpoints {
             new EndpointDescriptor<>(HttpMethod.POST, "/api/web-auth/redeem",
                     RedeemRequest.class, Void.class);
 
+    /** POST login: MC name + password → access token (refresh delivered as an httpOnly cookie). */
+    public static final EndpointDescriptor<LoginRequest, TokenPairResponse> LOGIN =
+            new EndpointDescriptor<>(HttpMethod.POST, "/api/web-auth/login",
+                    LoginRequest.class, TokenPairResponse.class);
+
+    /** POST refresh: refresh cookie → new access token (rotates the refresh cookie). No request body. */
+    public static final EndpointDescriptor<Void, TokenPairResponse> REFRESH =
+            new EndpointDescriptor<>(HttpMethod.POST, "/api/web-auth/session/refresh",
+                    Void.class, TokenPairResponse.class);
+
+    /** POST logout: invalidate the presented refresh token. Idempotent, no response body (204). */
+    public static final EndpointDescriptor<Void, Void> LOGOUT =
+            new EndpointDescriptor<>(HttpMethod.POST, "/api/web-auth/session/logout",
+                    Void.class, Void.class);
+
     private WebAuthEndpoints() {}
 }

@@ -86,5 +86,5 @@ ein gemeinsames Projekt behandeln.
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/003-web-auth-bridge/plan.md` (Feature: Web-Auth-Bridge — Ingame-Web-Account-Verknüpfung, state-stored, Branch `003-web-auth-bridge`).
+`specs/004-jwt-login-session/plan.md` (Feature: JWT-Login-Session — laufender Web-Login gegen web_account, state-stored Refresh-Token + stateless Access-JWT, Branch `004-jwt-login-session`).
 <!-- SPECKIT END -->
