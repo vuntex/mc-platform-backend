@@ -145,6 +145,21 @@ class WebSessionServiceTest {
         }
 
         @Override
+        public Optional<String> findNameByUuid(PlayerId player) {
+            return Optional.empty();
+        }
+
+        @Override
+        public java.util.List<PlayerNameMatch> searchByNamePrefix(String prefix, int limit) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public java.util.Map<java.util.UUID, String> findNamesByUuids(java.util.Collection<java.util.UUID> uuids) {
+            return java.util.Map.of();
+        }
+
+        @Override
         public void save(PlayerId player, String name, Instant seenAt) {
             throw new UnsupportedOperationException();
         }

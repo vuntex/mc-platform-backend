@@ -86,5 +86,5 @@ ein gemeinsames Projekt behandeln.
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/004-jwt-login-session/plan.md` (Feature: JWT-Login-Session — laufender Web-Login gegen web_account, state-stored Refresh-Token + stateless Access-JWT, Branch `004-jwt-login-session`).
+`specs/005-rank-management-api/plan.md` (Feature: Rank-Management-Backend — JWT-abgesicherte `/api/web/permission/**`-Schreib-/Lesefläche fürs Rollen-/Permission-/Grant-Management; wiederverwendet den 002-Permission-Stack + 004-JWT-Filter, granulare `permission.*`-Gates, player-scoped Live-Push, neuer `role_audit`-Strang (V13), Branch `005-rank-management-api`).
 <!-- SPECKIT END -->

@@ -7,7 +7,10 @@ import com.mcplatform.domain.player.PlayerId;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -59,5 +62,35 @@ public final class JooqPlayerRepository implements PlayerRepository {
                 .limit(1)
                 .fetchOne(PLAYER.UUID);
         return Optional.ofNullable(uuid).map(PlayerId::of);
+    }
+
+    @Override
+    public Optional<String> findNameByUuid(PlayerId player) {
+        return Optional.ofNullable(
+                dsl.select(PLAYER.NAME).from(PLAYER).where(PLAYER.UUID.eq(player.value())).fetchOne(PLAYER.NAME));
+    }
+
+    @Override
+    public Map<UUID, String> findNamesByUuids(Collection<UUID> uuids) {
+        if (uuids.isEmpty()) {
+            return Map.of();
+        }
+        return dsl.select(PLAYER.UUID, PLAYER.NAME)
+                .from(PLAYER)
+                .where(PLAYER.UUID.in(uuids))
+                .fetchMap(PLAYER.UUID, PLAYER.NAME);
+    }
+
+    @Override
+    public List<PlayerNameMatch> searchByNamePrefix(String prefix, int limit) {
+        // Escape LIKE metacharacters in the user input so they match literally; '\' is the escape char.
+        String escaped = prefix.toLowerCase(Locale.ROOT)
+                .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return dsl.select(PLAYER.UUID, PLAYER.NAME)
+                .from(PLAYER)
+                .where(DSL.lower(PLAYER.NAME).like(escaped + "%", '\\'))
+                .orderBy(PLAYER.NAME.asc())
+                .limit(limit)
+                .fetch(r -> new PlayerNameMatch(r.value1(), r.value2()));
     }
 }

@@ -4,6 +4,7 @@ import com.mcplatform.application.economy.port.CurrencyRepository;
 import com.mcplatform.application.economy.port.EconomyEventStore;
 import com.mcplatform.application.economy.port.PlayerRepository;
 import com.mcplatform.application.permission.port.GrantAuditPort;
+import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.punishment.port.PunishmentEventStore;
@@ -16,6 +17,7 @@ import com.mcplatform.application.webauth.port.WebAccountRepository;
 import com.mcplatform.persistence.JooqCurrencyRepository;
 import com.mcplatform.persistence.JooqEconomyRepository;
 import com.mcplatform.persistence.JooqGrantAuditRepository;
+import com.mcplatform.persistence.JooqRoleAuditRepository;
 import com.mcplatform.persistence.JooqPermissionResolver;
 import com.mcplatform.persistence.JooqPlayerGrantRepository;
 import com.mcplatform.persistence.JooqPlayerRepository;
@@ -93,6 +95,11 @@ public class PersistenceConfig {
     @Bean
     GrantAuditPort grantAuditPort(DSLContext dsl) {
         return new JooqGrantAuditRepository(dsl);
+    }
+
+    @Bean
+    RoleAuditPort roleAuditPort(DSLContext dsl) {
+        return new JooqRoleAuditRepository(dsl);
     }
 
     @Bean

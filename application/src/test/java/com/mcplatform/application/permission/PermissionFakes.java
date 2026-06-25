@@ -5,6 +5,7 @@ import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.GrantType;
 import com.mcplatform.application.permission.port.PermissionChangePublisher;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
+import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.domain.permission.PermissionChangeType;
@@ -245,6 +246,24 @@ final class PermissionFakes {
 
         long count(Action action) {
             return entries.stream().filter(e -> e.action() == action).count();
+        }
+    }
+
+    static final class FakeRoleAudit implements RoleAuditPort {
+        final List<Action> actions = new ArrayList<>();
+        final List<String> permissions = new ArrayList<>();
+        final List<UUID> actors = new ArrayList<>();
+
+        @Override
+        public void record(Action action, RoleId role, String roleName, String permission, UUID actor,
+                Instant at) {
+            actions.add(action);
+            permissions.add(permission);
+            actors.add(actor);
+        }
+
+        long count(Action action) {
+            return actions.stream().filter(a -> a == action).count();
         }
     }
 

@@ -5,6 +5,7 @@ import com.mcplatform.application.permission.PermissionAdminService;
 import com.mcplatform.application.permission.PermissionQueryService;
 import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.PermissionChangePublisher;
+import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.security.PermissionResolver;
@@ -32,9 +33,9 @@ public class PermissionConfig {
 
     @Bean
     PermissionAdminService permissionAdminService(RoleRepository roles, PlayerGrantRepository grants,
-            GrantAuditPort audit, PermissionChangePublisher publisher, PermissionResolver permissions,
-            Clock clock) {
-        return new PermissionAdminService(roles, grants, audit, publisher, permissions, clock);
+            GrantAuditPort audit, RoleAuditPort roleAudit, PermissionChangePublisher publisher,
+            PermissionResolver permissions, Clock clock) {
+        return new PermissionAdminService(roles, grants, audit, roleAudit, publisher, permissions, clock);
     }
 
     @Bean

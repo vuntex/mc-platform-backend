@@ -1044,3 +1044,106 @@ ein und erhält ein **stateless Access-JWT** (HS256, Subject = player_uuid, **nu
 - **Keine generische Klasse geändert**; einziger Eingriff in Bestand: additive D4-Zeile in
   `JooqWebAccountRepository.resetPassword`. Neue Deps modul-konform: jjwt nur in `app`, spring-security nur in
   `api-rest`.
+
+---
+
+## Rank-Management-Backend — siebtes Feature (Stand: 2026-06-25)
+
+**Backend-seitig komplett gebaut, `./gradlew build` grün** (Branch `005-rank-management-api`). Die vom
+künftigen Webinterface genutzte, **JWT-abgesicherte Schreib-/Lesefläche** `/api/web/permission/**` fürs
+Rollen-/Permission-/Grant-Management. **Überwiegend Reuse:** Der gesamte Schreibkern (Domäne,
+`PermissionAdminService`, `RoleRepository`/`PlayerGrantRepository`, Audit der Grants, Live-Push-Pfad)
+stammt aus dem vierten Feature (002) und wird wiederverwendet — dieser Slice steckt eine token-getriebene,
+autorisierte Eingangsfläche davor und ergänzt das Rollen-Audit.
+
+### Was steht
+- **api-rest `WebPermissionController`** (`/api/web/permission/**`, getrennt vom internen
+  `/api/permission/**`): liegt hinter dem 004-JWT-Filter (Wildcard `/api/web/**` → 401 ohne Token, **vor**
+  jeder Rechteprüfung). Akteur-UUID kommt aus `@AuthenticationPrincipal PlayerId` — **nie aus dem Body**.
+  Endpunkte: Rollen-CRUD + Liste/Detail, Rollen-Permission add/remove/list, Grant Rolle/Permission +
+  Revoke, `effective`. Schreiben gatet der wiederverwendete `PermissionAdminService` granular
+  (`permission.role.create|edit|delete`, `permission.grant.role|permission`); Lesen gatet der Controller
+  gegen `permission.read`. **Kein** `rank.*`-Vokabular, **kein** Gate-Seed (ADMIN hat `*`). **Kein**
+  Spring-Security-Rollenmodell — Autorisierung ausschließlich über `PermissionResolver` (§12).
+- **plugin-protocol `permission/web/`** (additiv, JDK-only): `RoleWriteRequest`,
+  `RolePermissionWriteRequest`, `GrantRoleWriteRequest`, `GrantPermissionWriteRequest`,
+  `RevokePermissionWriteRequest` — alle **ohne `actor`-Feld** (issued_by strukturell unfälschbar,
+  FR-002/FR-020). Response-DTOs (`RoleResponse`/`PlayerPermissionsResponse`) wiederverwendet. **Keine**
+  `EndpointDescriptor` (Consumer ist das TS-Frontend, kein Java-Client). `PlatformProtocol.create()`
+  **unangetastet** — der Permission-Pub/Sub-Pfad existierte bereits.
+- **Rollen-Audit (FR-025a):** neuer append-only Strang `role_audit` (Flyway **V13** — V11/V12 belegt) +
+  `RoleAuditPort` + `JooqRoleAuditRepository`, analog `config_audit`/`grant_audit`, **kein** FK auf `role`.
+  Eingehängt in `PermissionAdminService` (createRole/updateRole/deleteRole/add/removeRolePermission) →
+  beide Eingangspfade (intern + web) auditieren atomar. Grant-Audit bleibt der bestehende `grant_audit`.
+- **Permission-Syntax-Validierung (FR-014):** kleiner framework-freier `PermissionString`-Validator in
+  core-domain (blank/Whitespace/Negation/leere Segmente → `RoleValidationException` → 422), aufgerufen in
+  `addRolePermission` + `grantPermission`. Schließt eine im 002-Bestand fehlende Prüfung.
+- **Live-Push:** unverändert **player-scoped** (`PermissionChangedEvent` je betroffenem aktivem Träger),
+  best-effort nach Commit über `mc:permission:changed`. Bei Rollen-Permission-Änderung ein
+  `ROLE_CONFIG_CHANGED` je Halter; bei Grant/Revoke `GRANT_ADDED`/`GRANT_REVOKED`.
+- **Identitäts-Endpoint `GET /api/web/me`** (kleiner Zusatz, streng genommen außerhalb der 005-Spec, auf
+  Nutzerwunsch mitgebaut): liefert dem Frontend die backend-autoritative Identität **und die eigenen
+  effektiven Rechte** des eingeloggten Users — `MeResponse{ uuid, name, permissions[] }` aus dem
+  Token-Principal + `player.name` (Cache) + `PermissionQueryService.effectiveFor(caller)`. Kein
+  Permission-Gate (jeder authentifizierte User sieht **seine eigene** Identität/Rechte). Die `permissions`
+  dienen **nur** dem clientseitigen UX-Gating (Schreib-Buttons ein/ausblenden) und können Wildcards
+  (`*`, `feature.*`) enthalten → der Client wendet dieselbe Match-Regel an; die echte Prüfung bleibt
+  backend-autoritativ (403, §12). Dafür `PlayerRepository.findNameByUuid` ergänzt (additiver Port-Reader,
+  Präzedenz `findUuidByName` aus 004) + `WebMeController` + `MeResponse` (protocol). Zusätzlich liefert
+  `/me` den **primären Rang** `primaryRole{ name, displayName, color, weight }` — der höchstpriorisierte
+  aktive Rang via wiederverwendetem `RankDisplay.choose` (teamRank→weight→id; Default-Rolle als Fallback),
+  also derselbe Rang, dessen Farbe/Prefix auch im Spiel gilt. Dafür `PermissionQueryService.primaryRoleOf`
+  (additiv) + `PrimaryRole` (protocol).
+- **DEFAULT-Rolle ist reiner System-Fallback (Guard ergänzt):** Das Permission-Modell behandelt DEFAULT
+  bereits als **impliziten Fallback** — `EffectivePermissions`/`JooqPermissionResolver` ziehen die
+  Default-Permissions nur, wenn der Spieler **keine** aktive Rolle hält (`NOT EXISTS active_roles`).
+  Daraus folgt ohne Materialisierung: neue Rolle → Default greift nicht mehr; letzte Rolle weg/abgelaufen
+  → Default greift automatisch wieder. Ergänzt wurde nur der fehlende Guard: `PermissionAdminService`
+  blockt jetzt **Grant und Revoke der Default-Rolle** (→ 409 `default_role_protected`); DEFAULT kann also
+  nur noch der automatische Fallback sein, nie manuell vergeben/entzogen werden. (Bestehender Schutz:
+  Default nicht löschbar/deaktivierbar.) **Daten-Bereinigung V14** (`V14__remove_default_role_grants.sql`):
+  löscht etwaige Alt-`player_role_grant`-Zeilen auf die Default-Rolle, die angelegt wurden, bevor der Guard
+  existierte (sonst zeigte ein Spieler DEFAULT neben einer echten Rolle). Idempotent.
+  **Anzeige-Synthese (Web):** Hat ein Spieler **keine** aktive Rolle, fügt der Web-Pfad in
+  `effective`/Grant-/Revoke-Antworten einen **synthetischen** DEFAULT-Eintrag in die `roles`-Liste
+  (label = Default-Rollenname, `issuedBy=null`, keine DB-Zeile), damit das UI immer den aktuellen Rang
+  zeigt statt einer leeren Liste. Nach Entzug der letzten Rolle erscheint so sofort wieder DEFAULT.
+- **Aussteller-Name in der Grant-Ansicht:** `ActiveGrant` trägt jetzt zusätzlich `issuedByName` (neben der
+  `issuedBy`-UUID). Der Web-Pfad (`/api/web/permission/.../effective` etc.) löst die Aussteller-UUIDs
+  **gebündelt** (eine Query, kein N+1) über `PlayerRepository.findNamesByUuids` zu Namen auf; der interne
+  Plugin-Pfad lässt `issuedByName` weiterhin `null` (additiv, kein Contract-Bruch). System-Actor/Spieler
+  ohne `player`-Zeile → `null` (Frontend kann „System"/UUID als Fallback zeigen).
+- **Spieler-Suche `GET /api/web/players/search?name=&limit=`** (kleiner Zusatz, auf Nutzerwunsch): für das
+  Web-Management, um beim Granten einen Spieler per Name zu finden. **Bewusst unter `/api/web/**`** (JWT-
+  gegatet, `permission.read`), NICHT auf dem permitAll-`/api/players/**`-Pfad — sonst wäre die Namens-Suche
+  unauthentifiziert (Enumeration). Case-insensitiver Prefix über `idx_player_name_lower` (LIKE-Wildcards im
+  Input werden literal escaped), server-seitig limitiert (default 20, max 50), Antwort `PlayerSummary[]`
+  `{ uuid, name }`. Dafür `PlayerRepository.searchByNamePrefix` (additiv) + `WebPlayerController` +
+  `PlayerSummary` (protocol).
+
+### Verhalten / bewusste Grenzen
+- **Rolle-löschen-mit-Mitgliedern → Kaskade** (Q2): REVOKE + Audit + Live-Push je Halter, dann Löschung —
+  entspricht dem bereits gebauten Verhalten. Default-Rolle vor Löschung/Deaktivierung geschützt (409).
+- **Reine Anzeige-Edits einer Rolle** (Name/Farbe/Prefix/…) lösen **keinen** Live-Push aus (F1, kosmetisch).
+- **Grant an nie-gejointe UUID** erlaubt (Grant-Tabellen ohne FK auf `player`).
+- Fehlercodes über die bestehenden Handler: 401/403/404 (`role_not_found`)/409
+  (`default_role_protected`/`role_name_conflict`)/422 (`permission_invalid`)/400.
+- **Verschoben:** Audit-/History-**Lesen** (eigener Slice), Letzter-Admin-Schutz (Recovery via Seed/DB),
+  Absicherung des alten `/api/permission/**`-Pfads (vertraut weiter dem Body-`actor` — interner Pfad),
+  Frontend (Next.js).
+
+### Muster-Leck-Ledger (bewusst, begründet)
+- **Einziger Eingriff in Bestand:** Audit-Hooks im feature-eigenen `PermissionAdminService` (+ Konstruktor
+  um `RoleAuditPort`). Das ist **keine** generische Klasse → kein Leck. `PlatformProtocol.create()`,
+  `SecurityConfig`, `PermissionResolver`-Port, die bestehenden Repositories und alle generischen Bausteine
+  bleiben unverändert. Neuer Domain-Validator `PermissionString` ist additiv.
+
+### Tests grün
+- Domain: `PermissionStringTest`. Application: `PermissionAdminServiceTest` erweitert (role_audit je
+  Operation, Actor korrekt; Default-Schutz/Kaskade unverändert). infra-persistence:
+  `JooqRoleAuditRepositoryTest` (Testcontainers). app-E2E: `WebPermissionVerticalSliceTest` (Testcontainers
+  Postgres+Redis, echte Security-Chain mit gemintetem JWT) — 401/403/404/409/422, Kaskade, `role_audit`/
+  `grant_audit`, issued_by-aus-Token, Grant an nie-gejointe UUID, `ROLE_CONFIG_CHANGED`-Pub/Sub. Contract:
+  `WebPermissionDtoJsonTest` (`@JsonTest`, kein `actor`-Feld). Bestehende Suiten (Economy/Punishments/
+  Reports/002-Permission/004-WebAuth) unverändert grün (SC-007). `./gradlew build` grün;
+  `:plugin-protocol:publishToMavenLocal` grün, POM weiterhin ohne `<dependencies>`.
