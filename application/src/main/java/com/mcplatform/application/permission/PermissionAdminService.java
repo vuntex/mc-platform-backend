@@ -141,7 +141,13 @@ public final class PermissionAdminService {
     public void grantRole(PlayerId player, RoleId roleId, Instant expiresAt, String reason,
             java.util.UUID actor) {
         requirePermission(actor, GRANT_ROLE);
-        roles.find(roleId).orElseThrow(() -> new RoleNotFoundException(roleId));
+        Role role = roles.find(roleId).orElseThrow(() -> new RoleNotFoundException(roleId));
+        if (role.isDefault()) {
+            // The default role is never granted: it is the implicit fallback that applies exactly when a
+            // player holds no other active role (resolver/EffectivePermissions). Granting it is incoherent.
+            throw new DefaultRoleProtectedException(
+                    "the default role cannot be granted; it is the automatic fallback when a player has no other role");
+        }
         Instant now = clock.instant();
         requireFutureExpiry(expiresAt, now);
         grants.upsertRoleGrant(new RoleGrant(player, roleId, actor, now, expiresAt, reason, true));
@@ -152,6 +158,11 @@ public final class PermissionAdminService {
     /** Revoke a player's role grant. Requires {@link #GRANT_ROLE}. */
     public void revokeRole(PlayerId player, RoleId roleId, String reason, java.util.UUID actor) {
         requirePermission(actor, GRANT_ROLE);
+        // The default role is never a real grant (implicit fallback) → it cannot be revoked. Unknown roles
+        // stay lenient (no-op), so only block when the role exists AND is the default.
+        roles.find(roleId).filter(Role::isDefault).ifPresent(r -> {
+            throw new DefaultRoleProtectedException("the default role cannot be revoked; it is the automatic fallback");
+        });
         Instant now = clock.instant();
         if (grants.revokeRoleGrant(player, roleId)) {
             audit.record(GrantAuditPort.Entry.role(GrantAuditPort.Action.REVOKE, player, roleId, actor, reason, now));

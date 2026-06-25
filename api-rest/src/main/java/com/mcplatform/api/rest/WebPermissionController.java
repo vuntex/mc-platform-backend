@@ -2,12 +2,16 @@ package com.mcplatform.api.rest;
 
 import com.mcplatform.api.rest.support.PermissionMapper;
 import com.mcplatform.api.rest.support.WebPermissionMapper;
+import com.mcplatform.application.economy.port.PlayerRepository;
 import com.mcplatform.application.permission.PermissionAdminService;
 import com.mcplatform.application.permission.PermissionQueryService;
+import com.mcplatform.application.permission.PlayerPermissionsView;
 import com.mcplatform.application.security.PermissionDeniedException;
 import com.mcplatform.application.security.PermissionResolver;
+import com.mcplatform.domain.permission.Role;
 import com.mcplatform.domain.permission.RoleId;
 import com.mcplatform.domain.player.PlayerId;
+import com.mcplatform.protocol.permission.ActiveGrant;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleResponse;
 import com.mcplatform.protocol.permission.web.GrantPermissionWriteRequest;
@@ -17,6 +21,10 @@ import com.mcplatform.protocol.permission.web.RoleWriteRequest;
 import com.mcplatform.protocol.permission.web.RevokePermissionWriteRequest;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -45,13 +53,15 @@ public class WebPermissionController {
     private final PermissionAdminService admin;
     private final PermissionQueryService query;
     private final PermissionResolver resolver;
+    private final PlayerRepository playerRepository;
     private final Clock clock;
 
     public WebPermissionController(PermissionAdminService admin, PermissionQueryService query,
-            PermissionResolver resolver, Clock clock) {
+            PermissionResolver resolver, PlayerRepository playerRepository, Clock clock) {
         this.admin = admin;
         this.query = query;
         this.resolver = resolver;
+        this.playerRepository = playerRepository;
         this.clock = clock;
     }
 
@@ -117,7 +127,7 @@ public class WebPermissionController {
             @PathVariable UUID uuid, @RequestBody GrantRoleWriteRequest req) {
         admin.grantRole(PlayerId.of(uuid), RoleId.of(req.roleId()), expiry(req.expiresInSeconds()),
                 req.reason(), actor.value());
-        return PermissionMapper.player(query.effectiveFor(PlayerId.of(uuid)));
+        return effectiveView(uuid);
     }
 
     @DeleteMapping("/api/web/permission/players/{uuid}/roles/{roleId}")
@@ -125,7 +135,7 @@ public class WebPermissionController {
             @PathVariable UUID uuid, @PathVariable long roleId,
             @RequestParam(required = false) String reason) {
         admin.revokeRole(PlayerId.of(uuid), RoleId.of(roleId), reason, actor.value());
-        return PermissionMapper.player(query.effectiveFor(PlayerId.of(uuid)));
+        return effectiveView(uuid);
     }
 
     @PostMapping("/api/web/permission/players/{uuid}/permissions")
@@ -133,20 +143,20 @@ public class WebPermissionController {
             @PathVariable UUID uuid, @RequestBody GrantPermissionWriteRequest req) {
         admin.grantPermission(PlayerId.of(uuid), req.permission(), expiry(req.expiresInSeconds()),
                 req.reason(), actor.value());
-        return PermissionMapper.player(query.effectiveFor(PlayerId.of(uuid)));
+        return effectiveView(uuid);
     }
 
     @DeleteMapping("/api/web/permission/players/{uuid}/permissions")
     public PlayerPermissionsResponse revokePermission(@AuthenticationPrincipal PlayerId actor,
             @PathVariable UUID uuid, @RequestBody RevokePermissionWriteRequest req) {
         admin.revokePermission(PlayerId.of(uuid), req.permission(), req.reason(), actor.value());
-        return PermissionMapper.player(query.effectiveFor(PlayerId.of(uuid)));
+        return effectiveView(uuid);
     }
 
     @GetMapping("/api/web/permission/players/{uuid}/effective")
     public PlayerPermissionsResponse effective(@AuthenticationPrincipal PlayerId actor, @PathVariable UUID uuid) {
         requireRead(actor);
-        return PermissionMapper.player(query.effectiveFor(PlayerId.of(uuid)));
+        return effectiveView(uuid);
     }
 
     // --- helpers ----------------------------------------------------------
@@ -160,5 +170,33 @@ public class WebPermissionController {
 
     private Instant expiry(Long expiresInSeconds) {
         return expiresInSeconds == null ? null : clock.instant().plusSeconds(expiresInSeconds);
+    }
+
+    /**
+     * The player's effective view with grant-issuer UUIDs resolved to display names (batched, no N+1).
+     * When the player holds no active rank grant, the implicit DEFAULT fallback is surfaced as a synthetic
+     * (display-only, no DB row, no issuer) entry in {@code roles}, so the management UI always shows the
+     * player's current rank instead of an empty list.
+     */
+    private PlayerPermissionsResponse effectiveView(UUID uuid) {
+        PlayerPermissionsView view = query.effectiveFor(PlayerId.of(uuid));
+        Set<UUID> issuers = new HashSet<>();
+        view.roles().forEach(g -> addIssuer(issuers, g));
+        view.permissions().forEach(g -> addIssuer(issuers, g));
+        PlayerPermissionsResponse resp = PermissionMapper.player(view, playerRepository.findNamesByUuids(issuers));
+        if (resp.roles().isEmpty()) {
+            Role fallback = query.primaryRoleOf(PlayerId.of(uuid)); // = the DEFAULT role here
+            List<ActiveGrant> withDefault = new ArrayList<>();
+            withDefault.add(new ActiveGrant(fallback.name(), null, null, null, null));
+            resp = new PlayerPermissionsResponse(resp.player(), List.copyOf(withDefault), resp.permissions(),
+                    resp.effectivePermissions(), resp.display());
+        }
+        return resp;
+    }
+
+    private static void addIssuer(Set<UUID> issuers, PlayerPermissionsView.GrantSummary g) {
+        if (g.issuedBy() != null) {
+            issuers.add(g.issuedBy());
+        }
     }
 }

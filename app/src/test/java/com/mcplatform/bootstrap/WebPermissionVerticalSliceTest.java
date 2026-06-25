@@ -1,6 +1,7 @@
 package com.mcplatform.bootstrap;
 
 import static com.mcplatform.persistence.jooq.Tables.GRANT_AUDIT;
+import static com.mcplatform.persistence.jooq.Tables.PLAYER;
 import static com.mcplatform.persistence.jooq.Tables.PLAYER_ROLE_GRANT;
 import static com.mcplatform.persistence.jooq.Tables.ROLE;
 import static com.mcplatform.persistence.jooq.Tables.ROLE_AUDIT;
@@ -15,8 +16,12 @@ import com.mcplatform.protocol.permission.web.GrantRoleWriteRequest;
 import com.mcplatform.protocol.permission.web.RolePermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.RevokePermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.RoleWriteRequest;
+import com.mcplatform.protocol.player.PlayerSummary;
+import com.mcplatform.protocol.webauth.MeResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -114,6 +119,87 @@ class WebPermissionVerticalSliceTest {
         return new RoleWriteRequest(name, name, null, null, null, null, null, null, 10, false, true);
     }
 
+    // ====================== /api/web/players/search =======================
+
+    private UUID playerNamed(String name) {
+        UUID uuid = UUID.randomUUID();
+        dsl.insertInto(PLAYER)
+                .set(PLAYER.UUID, uuid)
+                .set(PLAYER.NAME, name)
+                .set(PLAYER.NAME_UPDATED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .execute();
+        return uuid;
+    }
+
+    @Test
+    void playerSearchReturnsCaseInsensitivePrefixMatches() {
+        UUID admin = staff("ADMIN");
+        UUID notch = playerNamed("Notch");
+        playerNamed("Notchy");
+        playerNamed("Herobrine");
+
+        PlayerSummary[] hits = rest.exchange("/api/web/players/search?name=not", HttpMethod.GET,
+                auth(admin, null), PlayerSummary[].class).getBody();
+        assertThat(hits).extracting(PlayerSummary::name).containsExactlyInAnyOrder("Notch", "Notchy");
+        assertThat(hits).extracting(PlayerSummary::uuid).contains(notch);
+
+        PlayerSummary[] none = rest.exchange("/api/web/players/search?name=zzz", HttpMethod.GET,
+                auth(admin, null), PlayerSummary[].class).getBody();
+        assertThat(none).isEmpty();
+    }
+
+    @Test
+    void playerSearchForbiddenWithoutReadPermission() {
+        UUID mod = staff("MODERATOR"); // no permission.read
+        playerNamed("Target");
+        ResponseEntity<String> r = rest.exchange("/api/web/players/search?name=tar", HttpMethod.GET,
+                auth(mod, null), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void playerSearchRequiresJwt() {
+        assertThat(rest.getForEntity("/api/web/players/search?name=x", String.class).getStatusCode())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    // ====================== /api/web/me — identity ========================
+
+    @Test
+    void meReturnsUuidAndCachedNameFromToken() {
+        UUID uuid = UUID.randomUUID();
+        dsl.insertInto(PLAYER)
+                .set(PLAYER.UUID, uuid)
+                .set(PLAYER.NAME, "Vuntex")
+                .set(PLAYER.NAME_UPDATED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .execute();
+
+        MeResponse me = rest.exchange("/api/web/me", HttpMethod.GET, auth(uuid, null), MeResponse.class).getBody();
+        assertThat(me.uuid()).isEqualTo(uuid);
+        assertThat(me.name()).isEqualTo("Vuntex"); // backend-authoritative, not the typed login name
+        assertThat(me.permissions()).isNotNull().isEmpty(); // bare player → default role (no perms)
+        assertThat(me.primaryRole()).isNotNull();
+        assertThat(me.primaryRole().name()).isEqualTo("DEFAULT"); // no active rank → default-role fallback
+        assertThat(me.primaryRole().weight()).isZero();
+    }
+
+    @Test
+    void meExposesCallersOwnEffectivePermissionsForButtonGating() {
+        UUID admin = staff("ADMIN"); // ADMIN role carries "*"
+        MeResponse me = rest.exchange("/api/web/me", HttpMethod.GET, auth(admin, null), MeResponse.class).getBody();
+        assertThat(me.uuid()).isEqualTo(admin);
+        assertThat(me.permissions()).contains("*"); // client applies the wildcard rule to gate buttons
+        assertThat(me.primaryRole().name()).isEqualTo("ADMIN"); // highest-priority active rank
+        assertThat(me.primaryRole().displayName()).isEqualTo("Admin");
+        assertThat(me.primaryRole().weight()).isEqualTo(100);
+    }
+
+    @Test
+    void meRequiresJwt() {
+        assertThat(rest.getForEntity("/api/web/me", String.class).getStatusCode())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
     // ====================== US1 — roles ===================================
 
     @Test
@@ -199,6 +285,31 @@ class WebPermissionVerticalSliceTest {
                 .isEqualTo(1);
     }
 
+    @Test
+    void defaultRoleIsShownWhenPlayerHasNoOtherRole() {
+        UUID admin = staff("ADMIN");
+        UUID player = UUID.randomUUID(); // no grants at all
+        PlayerPermissionsResponse view = rest.exchange("/api/web/permission/players/" + player + "/effective",
+                HttpMethod.GET, auth(admin, null), PlayerPermissionsResponse.class).getBody();
+        assertThat(view.roles()).extracting(g -> g.label()).containsExactly("DEFAULT");
+        assertThat(view.roles().get(0).issuedBy()).isNull(); // synthetic fallback, no issuer
+    }
+
+    @Test
+    void revokingTheLastRoleFallsBackToDefaultInTheView() {
+        UUID admin = staff("ADMIN");
+        UUID player = UUID.randomUUID();
+        RoleResponse temp = rest.exchange("/api/web/permission/roles", HttpMethod.POST,
+                auth(admin, role("TempRank")), RoleResponse.class).getBody();
+        rest.exchange("/api/web/permission/players/" + player + "/roles", HttpMethod.POST,
+                auth(admin, new GrantRoleWriteRequest(temp.id(), null, null)), PlayerPermissionsResponse.class);
+
+        PlayerPermissionsResponse afterRevoke = rest.exchange(
+                "/api/web/permission/players/" + player + "/roles/" + temp.id(), HttpMethod.DELETE,
+                auth(admin, null), PlayerPermissionsResponse.class).getBody();
+        assertThat(afterRevoke.roles()).extracting(g -> g.label()).containsExactly("DEFAULT");
+    }
+
     // ====================== US2 — role permissions ========================
 
     @Test
@@ -253,6 +364,16 @@ class WebPermissionVerticalSliceTest {
     // ====================== US3 — grants ==================================
 
     @Test
+    void defaultRoleCannotBeGrantedViaWeb() {
+        UUID admin = staff("ADMIN");
+        UUID player = UUID.randomUUID();
+        ResponseEntity<String> r = rest.exchange("/api/web/permission/players/" + player + "/roles",
+                HttpMethod.POST, auth(admin, new GrantRoleWriteRequest(defaultRoleId(), null, null)), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(r.getBody()).contains("default_role_protected");
+    }
+
+    @Test
     void grantRoleForbiddenForModerator() {
         UUID admin = staff("ADMIN");
         UUID mod = staff("MODERATOR");
@@ -278,6 +399,31 @@ class WebPermissionVerticalSliceTest {
         assertThat(view.roles()).anySatisfy(g -> {
             assertThat(g.label()).isEqualTo("Elite");
             assertThat(g.issuedBy()).isEqualTo(admin); // from the JWT, never from the body
+        });
+    }
+
+    @Test
+    void effectiveResolvesIssuerUuidToDisplayName() {
+        UUID admin = staff("ADMIN");
+        // give the acting admin a player row so the issuer UUID resolves to a name
+        dsl.insertInto(PLAYER)
+                .set(PLAYER.UUID, admin)
+                .set(PLAYER.NAME, "AdminGuy")
+                .set(PLAYER.NAME_UPDATED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                .execute();
+        UUID player = UUID.randomUUID();
+        RoleResponse issued = rest.exchange("/api/web/permission/roles", HttpMethod.POST,
+                auth(admin, role("IssuerRole")), RoleResponse.class).getBody();
+        rest.exchange("/api/web/permission/players/" + player + "/roles", HttpMethod.POST,
+                auth(admin, new GrantRoleWriteRequest(issued.id(), null, "earned")), PlayerPermissionsResponse.class);
+
+        PlayerPermissionsResponse view = rest.exchange("/api/web/permission/players/" + player + "/effective",
+                HttpMethod.GET, auth(admin, null), PlayerPermissionsResponse.class).getBody();
+
+        assertThat(view.roles()).anySatisfy(g -> {
+            assertThat(g.label()).isEqualTo("IssuerRole");
+            assertThat(g.issuedBy()).isEqualTo(admin);
+            assertThat(g.issuedByName()).isEqualTo("AdminGuy"); // name, not just the UUID
         });
     }
 

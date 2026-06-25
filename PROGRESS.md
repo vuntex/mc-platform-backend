@@ -1081,6 +1081,45 @@ autorisierte Eingangsfläche davor und ergänzt das Rollen-Audit.
 - **Live-Push:** unverändert **player-scoped** (`PermissionChangedEvent` je betroffenem aktivem Träger),
   best-effort nach Commit über `mc:permission:changed`. Bei Rollen-Permission-Änderung ein
   `ROLE_CONFIG_CHANGED` je Halter; bei Grant/Revoke `GRANT_ADDED`/`GRANT_REVOKED`.
+- **Identitäts-Endpoint `GET /api/web/me`** (kleiner Zusatz, streng genommen außerhalb der 005-Spec, auf
+  Nutzerwunsch mitgebaut): liefert dem Frontend die backend-autoritative Identität **und die eigenen
+  effektiven Rechte** des eingeloggten Users — `MeResponse{ uuid, name, permissions[] }` aus dem
+  Token-Principal + `player.name` (Cache) + `PermissionQueryService.effectiveFor(caller)`. Kein
+  Permission-Gate (jeder authentifizierte User sieht **seine eigene** Identität/Rechte). Die `permissions`
+  dienen **nur** dem clientseitigen UX-Gating (Schreib-Buttons ein/ausblenden) und können Wildcards
+  (`*`, `feature.*`) enthalten → der Client wendet dieselbe Match-Regel an; die echte Prüfung bleibt
+  backend-autoritativ (403, §12). Dafür `PlayerRepository.findNameByUuid` ergänzt (additiver Port-Reader,
+  Präzedenz `findUuidByName` aus 004) + `WebMeController` + `MeResponse` (protocol). Zusätzlich liefert
+  `/me` den **primären Rang** `primaryRole{ name, displayName, color, weight }` — der höchstpriorisierte
+  aktive Rang via wiederverwendetem `RankDisplay.choose` (teamRank→weight→id; Default-Rolle als Fallback),
+  also derselbe Rang, dessen Farbe/Prefix auch im Spiel gilt. Dafür `PermissionQueryService.primaryRoleOf`
+  (additiv) + `PrimaryRole` (protocol).
+- **DEFAULT-Rolle ist reiner System-Fallback (Guard ergänzt):** Das Permission-Modell behandelt DEFAULT
+  bereits als **impliziten Fallback** — `EffectivePermissions`/`JooqPermissionResolver` ziehen die
+  Default-Permissions nur, wenn der Spieler **keine** aktive Rolle hält (`NOT EXISTS active_roles`).
+  Daraus folgt ohne Materialisierung: neue Rolle → Default greift nicht mehr; letzte Rolle weg/abgelaufen
+  → Default greift automatisch wieder. Ergänzt wurde nur der fehlende Guard: `PermissionAdminService`
+  blockt jetzt **Grant und Revoke der Default-Rolle** (→ 409 `default_role_protected`); DEFAULT kann also
+  nur noch der automatische Fallback sein, nie manuell vergeben/entzogen werden. (Bestehender Schutz:
+  Default nicht löschbar/deaktivierbar.) **Daten-Bereinigung V14** (`V14__remove_default_role_grants.sql`):
+  löscht etwaige Alt-`player_role_grant`-Zeilen auf die Default-Rolle, die angelegt wurden, bevor der Guard
+  existierte (sonst zeigte ein Spieler DEFAULT neben einer echten Rolle). Idempotent.
+  **Anzeige-Synthese (Web):** Hat ein Spieler **keine** aktive Rolle, fügt der Web-Pfad in
+  `effective`/Grant-/Revoke-Antworten einen **synthetischen** DEFAULT-Eintrag in die `roles`-Liste
+  (label = Default-Rollenname, `issuedBy=null`, keine DB-Zeile), damit das UI immer den aktuellen Rang
+  zeigt statt einer leeren Liste. Nach Entzug der letzten Rolle erscheint so sofort wieder DEFAULT.
+- **Aussteller-Name in der Grant-Ansicht:** `ActiveGrant` trägt jetzt zusätzlich `issuedByName` (neben der
+  `issuedBy`-UUID). Der Web-Pfad (`/api/web/permission/.../effective` etc.) löst die Aussteller-UUIDs
+  **gebündelt** (eine Query, kein N+1) über `PlayerRepository.findNamesByUuids` zu Namen auf; der interne
+  Plugin-Pfad lässt `issuedByName` weiterhin `null` (additiv, kein Contract-Bruch). System-Actor/Spieler
+  ohne `player`-Zeile → `null` (Frontend kann „System"/UUID als Fallback zeigen).
+- **Spieler-Suche `GET /api/web/players/search?name=&limit=`** (kleiner Zusatz, auf Nutzerwunsch): für das
+  Web-Management, um beim Granten einen Spieler per Name zu finden. **Bewusst unter `/api/web/**`** (JWT-
+  gegatet, `permission.read`), NICHT auf dem permitAll-`/api/players/**`-Pfad — sonst wäre die Namens-Suche
+  unauthentifiziert (Enumeration). Case-insensitiver Prefix über `idx_player_name_lower` (LIKE-Wildcards im
+  Input werden literal escaped), server-seitig limitiert (default 20, max 50), Antwort `PlayerSummary[]`
+  `{ uuid, name }`. Dafür `PlayerRepository.searchByNamePrefix` (additiv) + `WebPlayerController` +
+  `PlayerSummary` (protocol).
 
 ### Verhalten / bewusste Grenzen
 - **Rolle-löschen-mit-Mitgliedern → Kaskade** (Q2): REVOKE + Audit + Live-Push je Halter, dann Löschung —

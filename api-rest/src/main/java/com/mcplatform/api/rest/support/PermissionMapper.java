@@ -10,6 +10,8 @@ import com.mcplatform.protocol.permission.RoleDisplay;
 import com.mcplatform.protocol.permission.RoleRequest;
 import com.mcplatform.protocol.permission.RoleResponse;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /** Maps between permission domain/read models and the {@code plugin-protocol} wire DTOs. */
 public final class PermissionMapper {
@@ -37,9 +39,18 @@ public final class PermissionMapper {
                 r.isDefault(), d.permissions());
     }
 
+    /** Maps without issuer-name enrichment (internal/plugin path): {@code issuedByName} stays null. */
     public static PlayerPermissionsResponse player(PlayerPermissionsView v) {
-        List<ActiveGrant> roles = v.roles().stream().map(PermissionMapper::grant).toList();
-        List<ActiveGrant> perms = v.permissions().stream().map(PermissionMapper::grant).toList();
+        return player(v, Map.of());
+    }
+
+    /**
+     * Maps and fills each grant's {@code issuedByName} from {@code issuerNames} (web path) — the actor's
+     * display name; absent UUIDs (system actor, no player row) leave it null.
+     */
+    public static PlayerPermissionsResponse player(PlayerPermissionsView v, Map<UUID, String> issuerNames) {
+        List<ActiveGrant> roles = v.roles().stream().map(g -> grant(g, issuerNames)).toList();
+        List<ActiveGrant> perms = v.permissions().stream().map(g -> grant(g, issuerNames)).toList();
         PlayerPermissionsView.Display d = v.display();
         RoleDisplay display = new RoleDisplay(d.displayName(), d.color(), d.prefix(), d.suffix(),
                 d.tabListColor(), d.tabListIcon(), d.displayIcon());
@@ -47,9 +58,9 @@ public final class PermissionMapper {
                 List.copyOf(v.effectivePermissions()), display);
     }
 
-    private static ActiveGrant grant(PlayerPermissionsView.GrantSummary g) {
+    private static ActiveGrant grant(PlayerPermissionsView.GrantSummary g, Map<UUID, String> issuerNames) {
         return new ActiveGrant(g.label(),
                 g.expiresAt() == null ? null : g.expiresAt().toEpochMilli(),
-                g.issuedBy(), g.reason());
+                g.issuedBy(), g.issuedBy() == null ? null : issuerNames.get(g.issuedBy()), g.reason());
     }
 }

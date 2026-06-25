@@ -32,7 +32,7 @@ mcplatform:
     refresh-ttl-days: 30
     refresh-purge-interval-ms: 3600000
     jwt:
-      secret: ${MCWEB_JWT_SECRET:}
+      secret: ${MCWEB_JWT_SECRET:12345678901234567890123456789012}
     cors:
       allowed-origin: ${MCWEB_ORIGIN:http://localhost:3000}
     refresh-cookie:

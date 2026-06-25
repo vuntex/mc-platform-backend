@@ -177,6 +177,20 @@ class PermissionAdminServiceTest {
     }
 
     @Test
+    void defaultRoleCannotBeGranted() {
+        PlayerId player = PlayerId.of(UUID.randomUUID());
+        assertThatThrownBy(() -> svc.grantRole(player, defaultRole.id(), null, null, admin))
+                .isInstanceOf(DefaultRoleProtectedException.class);
+    }
+
+    @Test
+    void defaultRoleCannotBeRevoked() {
+        PlayerId player = PlayerId.of(UUID.randomUUID());
+        assertThatThrownBy(() -> svc.revokeRole(player, defaultRole.id(), null, admin))
+                .isInstanceOf(DefaultRoleProtectedException.class);
+    }
+
+    @Test
     void grantRoleDeniedWithoutGrantPermission() {
         resolver.grant(nobody, PermissionAdminService.ROLE_CREATE); // has create but NOT grant.role
         Role premium = svc.createRole(draft("Premium"), admin);

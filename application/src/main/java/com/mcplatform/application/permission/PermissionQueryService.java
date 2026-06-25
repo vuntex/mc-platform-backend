@@ -44,6 +44,20 @@ public final class PermissionQueryService {
         return new RoleDetail(r, roles.permissionsOf(id));
     }
 
+    /**
+     * The player's primary (display) rank — the highest-priority active role per {@link RankDisplay}
+     * (teamRank → weight → id), or the default role when no active rank applies. Same selection the game
+     * uses for prefix/color, so a web badge stays consistent with in-game.
+     */
+    public Role primaryRoleOf(PlayerId player) {
+        Instant now = clock.instant();
+        List<Role> activeRoles = grants.activeRoleGrants(player, now).stream()
+                .map(g -> roles.find(g.role()).orElse(null))
+                .filter(r -> r != null && r.active())
+                .toList();
+        return RankDisplay.choose(activeRoles).orElseGet(roles::findDefault);
+    }
+
     public List<RoleDetail> allRoles() {
         return roles.findAll().stream()
                 .map(r -> new RoleDetail(r, roles.permissionsOf(r.id())))
