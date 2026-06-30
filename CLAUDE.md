@@ -86,5 +86,5 @@ ein gemeinsames Projekt behandeln.
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/005-rank-management-api/plan.md` (Feature: Rank-Management-Backend — JWT-abgesicherte `/api/web/permission/**`-Schreib-/Lesefläche fürs Rollen-/Permission-/Grant-Management; wiederverwendet den 002-Permission-Stack + 004-JWT-Filter, granulare `permission.*`-Gates, player-scoped Live-Push, neuer `role_audit`-Strang (V13), Branch `005-rank-management-api`).
+`specs/006-role-inheritance/plan.md` (Feature: Rollen-Vererbung — eine Rolle erbt transitiv die Permissions anderer Rollen (M:N, reine Union, kein Meta-Feld). Transitivität im `JooqPermissionResolver`-Hot-Path als rekursive `reachable_roles`-CTE + im View-Path als neue reine Domain-Schicht `RoleHierarchy` (vor das unveränderte `EffectivePermissions`); Default bleibt exklusiver Fallback (Blatt); Zyklus-Schutz zweistufig (409 + Visited-Set); Live-Push über bestehenden `ROLE_CONFIG_CHANGED`-Pfad an die Reverse-Closure; neue `role_inheritance`-Tabelle (V15); Gate `permission.role.edit.inherit`; Branch `006-role-inheritance`).
 <!-- SPECKIT END -->

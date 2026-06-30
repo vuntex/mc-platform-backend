@@ -7,6 +7,7 @@ import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.PermissionChangePublisher;
 import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
+import com.mcplatform.application.permission.port.RoleInheritanceRepository;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.bootstrap.adapter.RedisPermissionEventPublisher;
@@ -33,15 +34,16 @@ public class PermissionConfig {
 
     @Bean
     PermissionAdminService permissionAdminService(RoleRepository roles, PlayerGrantRepository grants,
-            GrantAuditPort audit, RoleAuditPort roleAudit, PermissionChangePublisher publisher,
-            PermissionResolver permissions, Clock clock) {
-        return new PermissionAdminService(roles, grants, audit, roleAudit, publisher, permissions, clock);
+            RoleInheritanceRepository inheritance, GrantAuditPort audit, RoleAuditPort roleAudit,
+            PermissionChangePublisher publisher, PermissionResolver permissions, Clock clock) {
+        return new PermissionAdminService(roles, grants, inheritance, audit, roleAudit, publisher,
+                permissions, clock);
     }
 
     @Bean
     PermissionQueryService permissionQueryService(RoleRepository roles, PlayerGrantRepository grants,
-            Clock clock) {
-        return new PermissionQueryService(roles, grants, clock);
+            RoleInheritanceRepository inheritance, Clock clock) {
+        return new PermissionQueryService(roles, grants, inheritance, clock);
     }
 
     @Bean

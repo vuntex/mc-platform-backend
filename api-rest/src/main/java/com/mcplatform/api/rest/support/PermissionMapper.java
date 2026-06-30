@@ -5,6 +5,7 @@ import com.mcplatform.application.permission.PlayerPermissionsView;
 import com.mcplatform.domain.permission.Role;
 import com.mcplatform.domain.permission.RoleId;
 import com.mcplatform.protocol.permission.ActiveGrant;
+import com.mcplatform.protocol.permission.EffectivePermissionEntry;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleDisplay;
 import com.mcplatform.protocol.permission.RoleRequest;
@@ -36,7 +37,7 @@ public final class PermissionMapper {
         Role r = d.role();
         return new RoleResponse(r.id().value(), r.name(), r.displayName(), r.color(), r.prefix(), r.suffix(),
                 r.tabListColor(), r.tabListIcon(), r.displayIcon(), r.weight(), r.teamRank(), r.active(),
-                r.isDefault(), d.permissions());
+                r.isDefault(), d.permissions(), d.inheritedRoleIds());
     }
 
     /** Maps without issuer-name enrichment (internal/plugin path): {@code issuedByName} stays null. */
@@ -51,11 +52,14 @@ public final class PermissionMapper {
     public static PlayerPermissionsResponse player(PlayerPermissionsView v, Map<UUID, String> issuerNames) {
         List<ActiveGrant> roles = v.roles().stream().map(g -> grant(g, issuerNames)).toList();
         List<ActiveGrant> perms = v.permissions().stream().map(g -> grant(g, issuerNames)).toList();
+        List<EffectivePermissionEntry> sources = v.sources().stream()
+                .map(s -> new EffectivePermissionEntry(s.permission(), s.own(), s.inheritedFromRoleIds()))
+                .toList();
         PlayerPermissionsView.Display d = v.display();
         RoleDisplay display = new RoleDisplay(d.displayName(), d.color(), d.prefix(), d.suffix(),
                 d.tabListColor(), d.tabListIcon(), d.displayIcon());
         return new PlayerPermissionsResponse(v.player(), roles, perms,
-                List.copyOf(v.effectivePermissions()), display);
+                List.copyOf(v.effectivePermissions()), sources, display);
     }
 
     private static ActiveGrant grant(PlayerPermissionsView.GrantSummary g, Map<UUID, String> issuerNames) {

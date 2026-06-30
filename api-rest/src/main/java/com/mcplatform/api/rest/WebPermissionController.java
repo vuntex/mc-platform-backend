@@ -16,6 +16,7 @@ import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleResponse;
 import com.mcplatform.protocol.permission.web.GrantPermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.GrantRoleWriteRequest;
+import com.mcplatform.protocol.permission.web.InheritanceWriteRequest;
 import com.mcplatform.protocol.permission.web.RolePermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.RoleWriteRequest;
 import com.mcplatform.protocol.permission.web.RevokePermissionWriteRequest;
@@ -120,6 +121,28 @@ public class WebPermissionController {
         return PermissionMapper.role(query.roleDetail(RoleId.of(id)));
     }
 
+    // --- role inheritance -------------------------------------------------
+
+    @GetMapping("/api/web/permission/roles/{id}/inheritance")
+    public long[] listInheritance(@AuthenticationPrincipal PlayerId actor, @PathVariable long id) {
+        requireRead(actor);
+        return query.inheritanceParents(RoleId.of(id)).stream().mapToLong(Long::longValue).toArray();
+    }
+
+    @PostMapping("/api/web/permission/roles/{id}/inheritance")
+    public RoleResponse addInheritance(@AuthenticationPrincipal PlayerId actor, @PathVariable long id,
+            @RequestBody InheritanceWriteRequest req) {
+        admin.addInheritance(RoleId.of(id), RoleId.of(req.parentRoleId()), actor.value());
+        return PermissionMapper.role(query.roleDetail(RoleId.of(id)));
+    }
+
+    @DeleteMapping("/api/web/permission/roles/{id}/inheritance/{parentId}")
+    public RoleResponse removeInheritance(@AuthenticationPrincipal PlayerId actor, @PathVariable long id,
+            @PathVariable long parentId) {
+        admin.removeInheritance(RoleId.of(id), RoleId.of(parentId), actor.value());
+        return PermissionMapper.role(query.roleDetail(RoleId.of(id)));
+    }
+
     // --- player grants ----------------------------------------------------
 
     @PostMapping("/api/web/permission/players/{uuid}/roles")
@@ -189,7 +212,7 @@ public class WebPermissionController {
             List<ActiveGrant> withDefault = new ArrayList<>();
             withDefault.add(new ActiveGrant(fallback.name(), null, null, null, null));
             resp = new PlayerPermissionsResponse(resp.player(), List.copyOf(withDefault), resp.permissions(),
-                    resp.effectivePermissions(), resp.display());
+                    resp.effectivePermissions(), resp.sources(), resp.display());
         }
         return resp;
     }

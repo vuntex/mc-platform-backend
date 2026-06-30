@@ -2,6 +2,7 @@ package com.mcplatform.protocol.permission;
 
 import com.mcplatform.protocol.core.EndpointDescriptor;
 import com.mcplatform.protocol.core.HttpMethod;
+import com.mcplatform.protocol.permission.web.InheritanceWriteRequest;
 
 /**
  * The permission/rank REST endpoints as constants, so clients reference them by name instead of
@@ -50,6 +51,18 @@ public final class PermissionEndpoints {
     public static final EndpointDescriptor<Void, PlayerPermissionsResponse> EFFECTIVE =
             new EndpointDescriptor<>(HttpMethod.GET, "/api/permission/players/{uuid}/effective",
                     Void.class, PlayerPermissionsResponse.class);
+
+    public static final EndpointDescriptor<Void, Long[]> LIST_INHERITANCE =
+            new EndpointDescriptor<>(HttpMethod.GET, "/api/permission/roles/{id}/inheritance",
+                    Void.class, Long[].class);
+
+    public static final EndpointDescriptor<InheritanceWriteRequest, RoleResponse> ADD_INHERITANCE =
+            new EndpointDescriptor<>(HttpMethod.POST, "/api/permission/roles/{id}/inheritance",
+                    InheritanceWriteRequest.class, RoleResponse.class);
+
+    public static final EndpointDescriptor<Void, RoleResponse> REMOVE_INHERITANCE =
+            new EndpointDescriptor<>(HttpMethod.DELETE, "/api/permission/roles/{id}/inheritance/{parentId}",
+                    Void.class, RoleResponse.class);
 
     private PermissionEndpoints() {}
 }

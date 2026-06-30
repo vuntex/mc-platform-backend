@@ -1147,3 +1147,65 @@ autorisierte Eingangsfläche davor und ergänzt das Rollen-Audit.
   `WebPermissionDtoJsonTest` (`@JsonTest`, kein `actor`-Feld). Bestehende Suiten (Economy/Punishments/
   Reports/002-Permission/004-WebAuth) unverändert grün (SC-007). `./gradlew build` grün;
   `:plugin-protocol:publishToMavenLocal` grün, POM weiterhin ohne `<dependencies>`.
+
+## Rollen-Vererbung — achtes Feature (state-stored, Stand: 2026-06-25)
+
+Greenfield-Erweiterung des Permission-Systems (kein Altplugin-Import; das Alt-System nutzte LuckPerms).
+Eine Rolle erbt die **Permissions** einer Liste anderer Rollen (Many-to-Many, explizit gesetzt,
+transitiv, reine Union ohne Gewichtung/Negation). Spec/Plan/Tasks: `specs/006-role-inheritance/`.
+Branch `006-role-inheritance`.
+
+### Was steht
+- **Domäne (`core-domain/permission`, framework-frei):** neue reine Klasse `RoleHierarchy` —
+  `reachable` (transitive Hülle mit Visited-Set), `wouldCreateCycle` (Schreib-Vorabcheck),
+  `resolveWithProvenance` (Herkunft je Permission, FR-022a). `EffectivePermissions`/`PermissionMatcher`
+  **unverändert** (Regression-Anker).
+- **Persistenz (jOOQ, Flyway V15):** neue Kantentabelle `role_inheritance` (`role_id` FK CASCADE,
+  `inherited_role_id` FK **RESTRICT** = DB-Netz für FR-015, PK auf dem Paar, `CHECK` gegen Selbstkante,
+  Index für Reverse-Closure). `JooqRoleInheritanceRepository` (add idempotent/remove/directParents/
+  directChildren/dependents als rekursive Reverse-CTE).
+- **Resolver-Kern (bewusster Eingriff, kein Leck):** `JooqPermissionResolver`-SQL um eine
+  `WITH RECURSIVE reachable_roles`-CTE erweitert (Basis = aktive Direkt-Rollen, Rekursion über
+  `role_inheritance`, `UNION`-Dedup). Bei leerem Graph **bit-identisch** zu vorher (Regression bewiesen).
+  Default-Zweig bleibt auf die **Basismenge** gegated (`NOT EXISTS active_roles`) → Default fließt in eine
+  echte Rolle nur über explizite Vererbung (FR-011/CL-1); `active` der Eltern wird nicht vererbt (FR-016).
+- **Application:** `PermissionAdminService` um `addInheritance`/`removeInheritance` erweitert
+  (Gate `permission.role.edit.inherit`, Default-als-child → 409, Zyklus-Vorabcheck → 409, Audit
+  `ROLE_INHERITANCE_ADD/REMOVE`); `deleteRole` lehnt geerbte Rolle ab (409, FR-015); `publishToHolders`
+  → `publishToRoleAndDependents` (Live-Push an die **transitive Reverse-Closure** — wirkt auch auf
+  role-permission-Edits, FR-020a). `PermissionQueryService` löst effektive Sichten transitiv auf und
+  liefert Provenienz (`sources`); `EffectivePermissions` bleibt einzige Quelle der flachen Menge.
+- **REST (`api-rest`):** `/api/web/permission/roles/{id}/inheritance` (GET Liste/POST add/DELETE remove),
+  actor aus dem JWT; neue 409-Mappings (`role_inheritance_cycle`, `role_inherited`).
+- **protocol (`plugin-protocol`, additiv, JDK-only):** `InheritanceWriteRequest`,
+  `EffectivePermissionEntry`, `RoleResponse.inheritedRoleIds`, `PlayerPermissionsResponse.sources`,
+  drei `PermissionEndpoints`-Deskriptoren. Pub/Sub: bestehender `ROLE_CONFIG_CHANGED`-Pfad —
+  **kein** neuer Channel/Event.
+
+### Verhalten / bewusste Grenzen
+- **Default-Konsistenz-Falle (CL-1):** Eine echte Rolle ohne Default in der Vererbungsliste lässt ihre
+  Träger weniger haben als ein Default-Spieler — bewusst keine Backend-Hilfe/Warnung (FR-012).
+- **Default-Rolle ist Blatt (CL-3):** kann nicht erben; andere dürfen von Default erben.
+- **Diamant (CL-2/FR-022a):** Herkunft je Permission = vollständige Quell-Rollenmenge + `own`-Flag.
+- **Verschoben:** Frontend-Vererbungs-Editor (pausierter Rank-UI-Slice); harter Max-Depth-Guard
+  (Terminierung ist durch Visited-Set/`UNION` garantiert).
+
+### Muster-Leck-Ledger (bewusst, begründet)
+- **Zwei Eingriffe in Feature-Kernlogik, kein generischer Baustein:** (1) `JooqPermissionResolver`-SQL
+  (rekursive CTE) — die korrekte Heimat der Auflösungsregel; (2) `PermissionAdminService`-Fan-out auf die
+  Reverse-Closure. Beide regressionsgesichert (leerer Graph = bit-identisch). `EffectivePermissions`,
+  `PermissionResolver`-Port, `PlatformProtocol.create()`, alle generischen Bausteine unverändert. Neuer
+  `RoleInheritanceRepository`-Port statt `RoleRepository` aufzubohren (Slice self-contained).
+
+### Tests grün
+- Domain: `RoleHierarchyTest` (Kette/Mehrfach/Diamant/Provenienz/Zyklus/Visited-Set-Terminierung).
+  Application: `PermissionAdminServiceTest` erweitert (Gate, Zyklus-409, Default-als-child-409, idempotent,
+  Audit, delete-while-inherited-409, Fan-out an transitive Dependents + Negativ-Fall) +
+  `PermissionQueryServiceInheritanceTest` (Default-Interplay, transitive Union, Provenienz). infra
+  (Testcontainers): `JooqRoleInheritanceRepositoryTest` (CRUD/idempotent/Reverse-Closure/RESTRICT/Cascade)
+  + `JooqPermissionResolverTest` erweitert (transitiv, geerbte Wildcard, deaktivierter Parent, Default via
+  Inheritance, Restzyklus terminiert, **Leer-Graph-Regression**). Contract: `PermissionEndpointsInheritanceTest`.
+  app-E2E: `WebPermissionVerticalSliceTest` erweitert (add/list/remove + `sources`, 403 ohne Gate, 409
+  Zyklus/Default/Delete, Live-`ROLE_CONFIG_CHANGED` an betroffene Halter). Bestehende 002/005-Suiten
+  unverändert grün (Regression). `./gradlew build` grün (365 Tests, 0 Fehler);
+  `:plugin-protocol:publishToMavenLocal` grün, POM weiterhin ohne `<dependencies>`.

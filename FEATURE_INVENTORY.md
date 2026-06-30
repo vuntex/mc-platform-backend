@@ -50,6 +50,15 @@
     Kein Eingriff in `PlatformProtocol.create()`/`SecurityConfig`/generische Klassen. Details: PROGRESS.md,
     „Rank-Management-Backend — siebtes Feature". Verschoben: Audit-/History-**Lesen**, Letzter-Admin-Schutz,
     Absicherung des alten `/api/permission/**`-Pfads, Frontend (Next.js).
+  - ✅ **Rollen-Vererbung gebaut (Greenfield, Branch `006-role-inheritance`):** Eine Rolle erbt die
+    **Permissions** anderer Rollen (Many-to-Many, transitiv, reine Union; LuckPerms-Vererbung bewusst
+    schlanker nachgebaut — keine Gewichtung/Negation/Kontexte). Neue reine Domäne `RoleHierarchy`
+    (transitive Hülle + Zyklus-Check + Provenienz), Kantentabelle `role_inheritance` (V15), Resolver-Kern
+    um eine rekursive CTE erweitert (Leer-Graph **bit-identisch** = Regression bewiesen), zweistufiger
+    Zyklus-Schutz (409 + Visited-Set), Default fließt nur über explizite Vererbung (Default ist Blatt),
+    Live-Push an die transitive Reverse-Closure (bestehendes `ROLE_CONFIG_CHANGED`, kein neuer Event),
+    Gate `permission.role.edit.inherit`. Details: PROGRESS.md, „Rollen-Vererbung — achtes Feature".
+    Verschoben: Frontend-Vererbungs-Editor (pausierter Rank-UI-Slice), harter Max-Depth-Guard.
 
 ### Kategorien-Legende
 - **DATA-CENTRIC** = lebt von persistenten Daten → Backend wird Source of Truth (Domäne + Persistenz + REST + ggf. Pub-Sub).

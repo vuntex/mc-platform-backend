@@ -1,6 +1,8 @@
 package com.mcplatform.api.rest;
 
 import com.mcplatform.application.permission.port.DefaultRoleProtectedException;
+import com.mcplatform.application.permission.port.RoleInheritanceCycleException;
+import com.mcplatform.application.permission.port.RoleInheritedException;
 import com.mcplatform.application.permission.port.RoleNameConflictException;
 import com.mcplatform.application.permission.port.RoleNotFoundException;
 import com.mcplatform.domain.permission.InvalidGrantException;
@@ -35,6 +37,18 @@ public class PermissionExceptionHandler {
     @ResponseStatus(HttpStatus.CONFLICT)
     public Map<String, String> defaultProtected(DefaultRoleProtectedException e) {
         return Map.of("error", "default_role_protected", "message", e.getMessage());
+    }
+
+    @ExceptionHandler(RoleInheritanceCycleException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> inheritanceCycle(RoleInheritanceCycleException e) {
+        return Map.of("error", "role_inheritance_cycle", "message", e.getMessage());
+    }
+
+    @ExceptionHandler(RoleInheritedException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> inherited(RoleInheritedException e) {
+        return Map.of("error", "role_inherited", "message", e.getMessage());
     }
 
     @ExceptionHandler({RoleValidationException.class, InvalidGrantException.class})

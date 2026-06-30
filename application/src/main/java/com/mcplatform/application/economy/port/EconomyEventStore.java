@@ -8,6 +8,7 @@ import com.mcplatform.domain.economy.PendingEconomyEvent;
 import com.mcplatform.domain.economy.TransactionId;
 import com.mcplatform.domain.economy.TransferId;
 import com.mcplatform.domain.player.PlayerId;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -63,4 +64,11 @@ public interface EconomyEventStore {
      */
     EconomyHistoryPage findHistory(PlayerId player, Optional<CurrencyCode> currency,
             Optional<EconomyEventType> eventType, Long cursorBeforeSeqNo, int limit);
+
+    /**
+     * Read-only: total money in circulation per currency (SUM of all projected balances) plus the
+     * account count, one entry per currency. Used for economy monitoring (circulation tracking + the
+     * suspicious-amount threshold). Writes nothing.
+     */
+    List<CirculationStats> circulation();
 }

@@ -124,6 +124,11 @@ class EconomyServiceTest {
         int failNextWrites = 0;
 
         @Override
+        public java.util.List<com.mcplatform.application.economy.port.CirculationStats> circulation() {
+            return java.util.List.of();
+        }
+
+        @Override
         public Balance currentBalance(PlayerId player, CurrencyCode currency) {
             currentCalls++;
             return balances.getOrDefault(key(player, currency), Balance.initial(player, currency));

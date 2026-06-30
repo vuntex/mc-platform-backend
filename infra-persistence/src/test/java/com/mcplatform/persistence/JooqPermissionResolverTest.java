@@ -169,4 +169,80 @@ class JooqPermissionResolverTest {
                 .execute();
         assertThat(resolver.hasPermission(uuid, "kit.vip")).isTrue();
     }
+
+    // --- inheritance (006) ------------------------------------------------
+
+    private void inherit(long child, long parent) {
+        dsl.insertInto(com.mcplatform.persistence.jooq.Tables.ROLE_INHERITANCE)
+                .set(com.mcplatform.persistence.jooq.Tables.ROLE_INHERITANCE.ROLE_ID, child)
+                .set(com.mcplatform.persistence.jooq.Tables.ROLE_INHERITANCE.INHERITED_ROLE_ID, parent)
+                .onConflictDoNothing()
+                .execute();
+    }
+
+    @Test
+    void inheritedPermissionsResolveTransitively() {
+        long a = createRole("ChainA", true);                 // no own perms
+        long b = createRole("ChainB", true, "b.perm");
+        long c = createRole("ChainC", true, "c.perm");
+        inherit(a, b);
+        inherit(b, c);
+        UUID uuid = grantRole(a, null);
+
+        assertThat(resolver.hasPermission(uuid, "b.perm")).isTrue();
+        assertThat(resolver.hasPermission(uuid, "c.perm")).isTrue(); // transitive A->B->C
+        assertThat(resolver.hasPermission(uuid, "x.perm")).isFalse();
+    }
+
+    @Test
+    void inheritedWildcardMatches() { // FR-005
+        long parent = createRole("WildParent", true, "report.*");
+        long child = createRole("WildChild", true);
+        inherit(child, parent);
+        UUID uuid = grantRole(child, null);
+        assertThat(resolver.hasPermission(uuid, "report.view")).isTrue();
+        assertThat(resolver.hasPermission(uuid, "reporting")).isFalse();
+    }
+
+    @Test
+    void inheritsFromDeactivatedParentStillContributesPermissions() { // FR-016
+        long parent = createRole("DisabledParent", false, "ghost.perm"); // active = false
+        long child = createRole("ActiveChild", true);
+        inherit(child, parent);
+        UUID uuid = grantRole(child, null);
+        // The parent's active flag is not inherited; its permissions still flow through the edge.
+        assertThat(resolver.hasPermission(uuid, "ghost.perm")).isTrue();
+    }
+
+    @Test
+    void defaultPermissionsReachARealRoleOnlyViaExplicitInheritance() { // FR-011 / CL-1
+        dsl.insertInto(ROLE_PERMISSION).set(ROLE_PERMISSION.ROLE_ID, roleId("DEFAULT"))
+                .set(ROLE_PERMISSION.PERMISSION, "lobby.join").onConflictDoNothing().execute();
+        long premium = createRole("PremiumX", true, "premium.fly");
+        UUID withoutEdge = grantRole(premium, null);
+        assertThat(resolver.hasPermission(withoutEdge, "lobby.join")).isFalse(); // no Default base (the trap)
+
+        inherit(premium, roleId("DEFAULT"));
+        UUID withEdge = grantRole(premium, null);
+        assertThat(resolver.hasPermission(withEdge, "lobby.join")).isTrue();     // now via inheritance
+    }
+
+    @Test
+    void resolutionTerminatesOnAResidualCycleInTheData() { // FR-010a defensive net
+        long a = createRole("CycA", true, "a.perm");
+        long b = createRole("CycB", true, "b.perm");
+        inherit(a, b);
+        inherit(b, a); // residual cycle (the write-path 409 would normally prevent this)
+        UUID uuid = grantRole(a, null);
+        assertThat(resolver.hasPermission(uuid, "a.perm")).isTrue();
+        assertThat(resolver.hasPermission(uuid, "b.perm")).isTrue(); // terminates, unions both
+    }
+
+    @Test
+    void emptyInheritanceGraphResolvesExactlyAsBeforeInheritance() { // FR-008 / SC-002 regression anchor
+        long role = createRole("FlatRole", true, "flat.perm");
+        UUID uuid = grantRole(role, null);
+        assertThat(resolver.hasPermission(uuid, "flat.perm")).isTrue();
+        assertThat(resolver.hasPermission(uuid, "other.perm")).isFalse();
+    }
 }

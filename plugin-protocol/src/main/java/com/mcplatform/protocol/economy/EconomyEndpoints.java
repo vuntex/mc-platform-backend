@@ -41,5 +41,10 @@ public final class EconomyEndpoints {
     public static final EndpointDescriptor<TransferRequest, TransferResponse> TRANSFER =
             new EndpointDescriptor<>(HttpMethod.POST, BASE + "/transfer", TransferRequest.class, TransferResponse.class);
 
+    /** GET total money in circulation + account count for a currency. */
+    public static final EndpointDescriptor<Void, EconomyStatsResponse> STATS =
+            new EndpointDescriptor<>(HttpMethod.GET, "/api/economy/stats/{currency}",
+                    Void.class, EconomyStatsResponse.class);
+
     private EconomyEndpoints() {}
 }

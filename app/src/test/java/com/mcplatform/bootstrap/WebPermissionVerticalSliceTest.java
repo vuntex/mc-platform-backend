@@ -13,6 +13,7 @@ import com.mcplatform.domain.player.PlayerId;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleResponse;
 import com.mcplatform.protocol.permission.web.GrantRoleWriteRequest;
+import com.mcplatform.protocol.permission.web.InheritanceWriteRequest;
 import com.mcplatform.protocol.permission.web.RolePermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.RevokePermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.RoleWriteRequest;
@@ -460,5 +461,122 @@ class WebPermissionVerticalSliceTest {
                 "/api/web/permission/players/" + player + "/permissions", HttpMethod.DELETE,
                 auth(admin, new RevokePermissionWriteRequest("home.set", null)), PlayerPermissionsResponse.class);
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    // ====================== 006 — role inheritance ========================
+
+    /** Creates a role via the web API and returns it. */
+    private RoleResponse newRole(UUID admin, String name) {
+        return rest.exchange("/api/web/permission/roles", HttpMethod.POST, auth(admin, role(name)),
+                RoleResponse.class).getBody();
+    }
+
+    @Test
+    void adminAddsListsAndRemovesInheritanceAndEffectiveShowsProvenance() {
+        UUID admin = staff("ADMIN");
+        RoleResponse base = newRole(admin, "InhBase");
+        rest.exchange("/api/web/permission/roles/" + base.id() + "/permissions", HttpMethod.POST,
+                auth(admin, new RolePermissionWriteRequest("base.home")), RoleResponse.class);
+        RoleResponse premium = newRole(admin, "InhPremium");
+
+        // add edge Premium -> Base
+        RoleResponse afterAdd = rest.exchange("/api/web/permission/roles/" + premium.id() + "/inheritance",
+                HttpMethod.POST, auth(admin, new InheritanceWriteRequest(base.id())), RoleResponse.class).getBody();
+        assertThat(afterAdd.inheritedRoleIds()).contains(base.id());
+
+        // list
+        Long[] parents = rest.exchange("/api/web/permission/roles/" + premium.id() + "/inheritance",
+                HttpMethod.GET, auth(admin, null), Long[].class).getBody();
+        assertThat(parents).containsExactly(base.id());
+
+        // a player holding only Premium effectively has base.home, with provenance pointing at Base
+        UUID player = UUID.randomUUID();
+        rest.exchange("/api/web/permission/players/" + player + "/roles", HttpMethod.POST,
+                auth(admin, new GrantRoleWriteRequest(premium.id(), null, null)), PlayerPermissionsResponse.class);
+        PlayerPermissionsResponse view = rest.exchange("/api/web/permission/players/" + player + "/effective",
+                HttpMethod.GET, auth(admin, null), PlayerPermissionsResponse.class).getBody();
+        assertThat(view.effectivePermissions()).contains("base.home");
+        assertThat(view.sources()).anySatisfy(s -> {
+            assertThat(s.permission()).isEqualTo("base.home");
+            assertThat(s.own()).isFalse();
+            assertThat(s.inheritedFromRoleIds()).contains(base.id());
+        });
+
+        // remove edge → permission gone
+        rest.exchange("/api/web/permission/roles/" + premium.id() + "/inheritance/" + base.id(),
+                HttpMethod.DELETE, auth(admin, null), RoleResponse.class);
+        PlayerPermissionsResponse after = rest.exchange("/api/web/permission/players/" + player + "/effective",
+                HttpMethod.GET, auth(admin, null), PlayerPermissionsResponse.class).getBody();
+        assertThat(after.effectivePermissions()).doesNotContain("base.home");
+    }
+
+    @Test
+    void inheritanceForbiddenWithoutInheritGate() {
+        UUID admin = staff("ADMIN");
+        UUID mod = staff("MODERATOR"); // lacks permission.role.edit.inherit
+        RoleResponse base = newRole(admin, "GateBase");
+        RoleResponse child = newRole(admin, "GateChild");
+        ResponseEntity<String> r = rest.exchange("/api/web/permission/roles/" + child.id() + "/inheritance",
+                HttpMethod.POST, auth(mod, new InheritanceWriteRequest(base.id())), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void cyclicInheritanceReturns409() {
+        UUID admin = staff("ADMIN");
+        RoleResponse a = newRole(admin, "CycWebA");
+        RoleResponse b = newRole(admin, "CycWebB");
+        rest.exchange("/api/web/permission/roles/" + a.id() + "/inheritance", HttpMethod.POST,
+                auth(admin, new InheritanceWriteRequest(b.id())), RoleResponse.class); // A -> B
+        ResponseEntity<String> r = rest.exchange("/api/web/permission/roles/" + b.id() + "/inheritance",
+                HttpMethod.POST, auth(admin, new InheritanceWriteRequest(a.id())), String.class); // B -> A
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(r.getBody()).contains("role_inheritance_cycle");
+    }
+
+    @Test
+    void defaultRoleCannotInheritReturns409() {
+        UUID admin = staff("ADMIN");
+        RoleResponse base = newRole(admin, "DefInhBase");
+        ResponseEntity<String> r = rest.exchange("/api/web/permission/roles/" + defaultRoleId() + "/inheritance",
+                HttpMethod.POST, auth(admin, new InheritanceWriteRequest(base.id())), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(r.getBody()).contains("default_role_protected");
+    }
+
+    @Test
+    void deletingAnInheritedRoleReturns409() {
+        UUID admin = staff("ADMIN");
+        RoleResponse base = newRole(admin, "DelInhBase");
+        RoleResponse child = newRole(admin, "DelInhChild");
+        rest.exchange("/api/web/permission/roles/" + child.id() + "/inheritance", HttpMethod.POST,
+                auth(admin, new InheritanceWriteRequest(base.id())), RoleResponse.class);
+        ResponseEntity<String> r = rest.exchange("/api/web/permission/roles/" + base.id(),
+                HttpMethod.DELETE, auth(admin, null), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(r.getBody()).contains("role_inherited");
+    }
+
+    @Test
+    void inheritanceChangePublishesLiveEventToAffectedHolders() throws Exception {
+        UUID admin = staff("ADMIN");
+        RoleResponse base = newRole(admin, "LiveBase");
+        RoleResponse premium = newRole(admin, "LivePremium");
+        UUID player = UUID.randomUUID();
+        rest.exchange("/api/web/permission/players/" + player + "/roles", HttpMethod.POST,
+                auth(admin, new GrantRoleWriteRequest(premium.id(), null, null)), PlayerPermissionsResponse.class);
+
+        LinkedBlockingQueue<String> events = new LinkedBlockingQueue<>();
+        try (AutoCloseable sub = redis.subscribe(
+                com.mcplatform.protocol.permission.PermissionChannels.CHANGED, events::offer)) {
+            Thread.sleep(200);
+            rest.exchange("/api/web/permission/roles/" + premium.id() + "/inheritance", HttpMethod.POST,
+                    auth(admin, new InheritanceWriteRequest(base.id())), RoleResponse.class);
+
+            String wire = events.poll(3, TimeUnit.SECONDS);
+            assertThat(wire).as("inheritance change published to the Premium holder").isNotNull();
+            assertThat(wire).contains("ROLE_CONFIG_CHANGED");
+            assertThat(wire).contains(player.toString());
+        }
     }
 }
