@@ -3,16 +3,12 @@ package com.mcplatform.application.economy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.mcplatform.application.economy.port.AppendResult;
 import com.mcplatform.application.economy.port.CirculationStats;
-import com.mcplatform.application.economy.port.EconomyEventStore;
-import com.mcplatform.application.economy.port.TransferResult;
+import com.mcplatform.application.economy.port.EconomyReadStore;
 import com.mcplatform.domain.economy.AppliedEconomyEvent;
-import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
 import com.mcplatform.domain.economy.EconomyEventType;
 import com.mcplatform.domain.economy.Money;
-import com.mcplatform.domain.economy.PendingEconomyEvent;
 import com.mcplatform.domain.economy.TransactionId;
 import com.mcplatform.domain.economy.TransferId;
 import com.mcplatform.domain.player.PlayerId;
@@ -123,18 +119,15 @@ class EconomyAlertMonitorTest {
     }
 
     /** Minimal store: only {@link #circulation()} is meaningful. */
-    private record FakeStore(long total, int accounts) implements EconomyEventStore {
+    private record FakeStore(long total, int accounts) implements EconomyReadStore {
         @Override
         public List<CirculationStats> circulation() {
             return List.of(new CirculationStats(COINS, total, accounts));
         }
 
-        @Override public Balance currentBalance(PlayerId p, CurrencyCode c) { throw new UnsupportedOperationException(); }
-        @Override public void ensureZeroBalance(PlayerId p, CurrencyCode c) { throw new UnsupportedOperationException(); }
-        @Override public AppendResult append(PendingEconomyEvent e, long v) { throw new UnsupportedOperationException(); }
-        @Override public TransferResult transfer(PendingEconomyEvent o, long ov, PendingEconomyEvent i, long iv) { throw new UnsupportedOperationException(); }
-        @Override public Optional<AppendResult> findByTransactionId(TransactionId t) { throw new UnsupportedOperationException(); }
-        @Override public Optional<TransferResult> findTransfer(TransferId c) { throw new UnsupportedOperationException(); }
         @Override public EconomyHistoryPage findHistory(PlayerId p, Optional<CurrencyCode> c, Optional<EconomyEventType> t, Long cur, int l) { throw new UnsupportedOperationException(); }
+        @Override public EconomyHistoryPage findServerHistory(Optional<CurrencyCode> c, Optional<EconomyEventType> t, Optional<String> s, Long cur, int l) { throw new UnsupportedOperationException(); }
+        @Override public List<com.mcplatform.application.economy.port.ProjectedBalance> playerBalances(PlayerId p) { throw new UnsupportedOperationException(); }
+        @Override public Optional<com.mcplatform.application.economy.port.TransactionDetail> findTransaction(com.mcplatform.domain.economy.TransactionId t) { throw new UnsupportedOperationException(); }
     }
 }

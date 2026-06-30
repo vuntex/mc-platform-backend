@@ -2,6 +2,7 @@ package com.mcplatform.bootstrap.config;
 
 import com.mcplatform.application.economy.port.CurrencyRepository;
 import com.mcplatform.application.economy.port.EconomyEventStore;
+import com.mcplatform.application.economy.port.EconomyReadStore;
 import com.mcplatform.application.economy.port.PlayerRepository;
 import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.RoleAuditPort;
@@ -16,6 +17,7 @@ import com.mcplatform.application.webauth.port.LinkTokenRepository;
 import com.mcplatform.application.webauth.port.RefreshTokenRepository;
 import com.mcplatform.application.webauth.port.WebAccountRepository;
 import com.mcplatform.persistence.JooqCurrencyRepository;
+import com.mcplatform.persistence.JooqEconomyReadStore;
 import com.mcplatform.persistence.JooqEconomyRepository;
 import com.mcplatform.persistence.JooqGrantAuditRepository;
 import com.mcplatform.persistence.JooqRoleAuditRepository;
@@ -52,6 +54,11 @@ public class PersistenceConfig {
     @Bean
     EconomyEventStore economyEventStore(DSLContext dsl) {
         return new JooqEconomyRepository(dsl);
+    }
+
+    @Bean
+    EconomyReadStore economyReadStore(DSLContext dsl) {
+        return new JooqEconomyReadStore(dsl);
     }
 
     @Bean

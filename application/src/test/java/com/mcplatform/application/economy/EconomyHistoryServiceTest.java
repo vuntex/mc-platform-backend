@@ -3,15 +3,9 @@ package com.mcplatform.application.economy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.mcplatform.application.economy.port.AppendResult;
-import com.mcplatform.application.economy.port.EconomyEventStore;
-import com.mcplatform.application.economy.port.TransferResult;
-import com.mcplatform.domain.economy.Balance;
+import com.mcplatform.application.economy.port.EconomyReadStore;
 import com.mcplatform.domain.economy.CurrencyCode;
 import com.mcplatform.domain.economy.EconomyEventType;
-import com.mcplatform.domain.economy.PendingEconomyEvent;
-import com.mcplatform.domain.economy.TransactionId;
-import com.mcplatform.domain.economy.TransferId;
 import com.mcplatform.domain.player.PlayerId;
 import java.util.List;
 import java.util.Optional;
@@ -77,8 +71,8 @@ class EconomyHistoryServiceTest {
         assertThat(store.lastCursor).isEqualTo(99L);
     }
 
-    /** Records the last findHistory arguments; other operations are unused here. */
-    private static final class RecordingStore implements EconomyEventStore {
+    /** Records the last findHistory arguments; circulation is unused here. */
+    private static final class RecordingStore implements EconomyReadStore {
         PlayerId lastPlayer;
         Optional<CurrencyCode> lastCurrency;
         Optional<EconomyEventType> lastType;
@@ -87,6 +81,11 @@ class EconomyHistoryServiceTest {
 
         @Override
         public java.util.List<com.mcplatform.application.economy.port.CirculationStats> circulation() {
+            return java.util.List.of();
+        }
+
+        @Override
+        public java.util.List<com.mcplatform.application.economy.port.ProjectedBalance> playerBalances(PlayerId player) {
             return java.util.List.of();
         }
 
@@ -102,34 +101,15 @@ class EconomyHistoryServiceTest {
         }
 
         @Override
-        public Balance currentBalance(PlayerId player, CurrencyCode currency) {
-            throw new UnsupportedOperationException();
+        public EconomyHistoryPage findServerHistory(Optional<CurrencyCode> currency,
+                Optional<EconomyEventType> eventType, Optional<String> source, Long cursorBeforeSeqNo, int limit) {
+            return new EconomyHistoryPage(List.of(), null);
         }
 
         @Override
-        public void ensureZeroBalance(PlayerId player, CurrencyCode currency) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public AppendResult append(PendingEconomyEvent event, long expectedVersion) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public TransferResult transfer(PendingEconomyEvent out, long expectedFromVersion,
-                PendingEconomyEvent in, long expectedToVersion) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Optional<AppendResult> findByTransactionId(TransactionId transactionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Optional<TransferResult> findTransfer(TransferId correlationId) {
-            throw new UnsupportedOperationException();
+        public Optional<com.mcplatform.application.economy.port.TransactionDetail> findTransaction(
+                com.mcplatform.domain.economy.TransactionId transactionId) {
+            return Optional.empty();
         }
     }
 }

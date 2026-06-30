@@ -14,7 +14,8 @@ import java.util.UUID;
  * {@code sequenceNo} is the global ordering and the keyset-pagination cursor. {@code correlationId} is
  * the transfer correlation id read from event metadata — {@code null} for non-transfer events.
  * {@code counterpartyUuid} is the other party of a transfer (the opposite leg's player) — {@code null}
- * otherwise.
+ * otherwise. {@code playerUuid} is the event's own player and {@code playerName} its resolved display
+ * name (server-wide history's "who" column; on player-filtered history both refer to the queried player).
  */
 public record EconomyHistoryEntry(
         long sequenceNo,
@@ -26,7 +27,9 @@ public record EconomyHistoryEntry(
         String source,
         UUID correlationId,
         UUID counterpartyUuid,
-        Instant occurredAt) {
+        Instant occurredAt,
+        UUID playerUuid,
+        String playerName) {
 
     public EconomyHistoryEntry {
         Objects.requireNonNull(currency, "currency");
@@ -36,6 +39,7 @@ public record EconomyHistoryEntry(
         Objects.requireNonNull(transactionId, "transactionId");
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(occurredAt, "occurredAt");
-        // correlationId is nullable: set only for the two legs of a transfer.
+        Objects.requireNonNull(playerUuid, "playerUuid");
+        // correlationId/counterpartyUuid nullable; playerName may be null if the player row is absent.
     }
 }

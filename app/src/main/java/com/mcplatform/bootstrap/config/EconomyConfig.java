@@ -1,16 +1,22 @@
 package com.mcplatform.bootstrap.config;
 
+import com.mcplatform.application.economy.BalanceStreamBroadcaster;
 import com.mcplatform.application.economy.EconomyAlertMonitor;
 import com.mcplatform.application.economy.EconomyHistoryService;
 import com.mcplatform.application.economy.EconomyService;
 import com.mcplatform.application.economy.EconomyStatsService;
+import com.mcplatform.application.economy.PlayerBalancesQuery;
+import com.mcplatform.application.economy.ServerHistoryQuery;
+import com.mcplatform.application.economy.TransactionDetailQuery;
 import com.mcplatform.application.economy.port.BalanceCachePort;
 import com.mcplatform.application.economy.port.BalanceEventPublisher;
 import com.mcplatform.application.economy.port.EconomyAlertPublisher;
 import com.mcplatform.application.economy.port.EconomyEventStore;
+import com.mcplatform.application.economy.port.EconomyReadStore;
 import com.mcplatform.bootstrap.adapter.AlertingBalanceEventPublisher;
 import com.mcplatform.bootstrap.adapter.RedisBalanceEventPublisher;
 import com.mcplatform.bootstrap.adapter.RedisEconomyAlertPublisher;
+import com.mcplatform.bootstrap.adapter.RedisEconomyStreamBridge;
 import com.mcplatform.cache.BalanceCache;
 import com.mcplatform.cache.RedisBalanceCacheAdapter;
 import com.mcplatform.cache.RedisCacheAdapter;
@@ -29,7 +35,7 @@ public class EconomyConfig {
     }
 
     @Bean
-    EconomyStatsService economyStatsService(EconomyEventStore store) {
+    EconomyStatsService economyStatsService(EconomyReadStore store) {
         return new EconomyStatsService(store);
     }
 
@@ -60,7 +66,27 @@ public class EconomyConfig {
     }
 
     @Bean
-    EconomyHistoryService economyHistoryService(EconomyEventStore store) {
+    EconomyHistoryService economyHistoryService(EconomyReadStore store) {
         return new EconomyHistoryService(store);
+    }
+
+    @Bean
+    PlayerBalancesQuery playerBalancesQuery(EconomyReadStore store) {
+        return new PlayerBalancesQuery(store);
+    }
+
+    @Bean
+    ServerHistoryQuery serverHistoryQuery(EconomyReadStore store) {
+        return new ServerHistoryQuery(store);
+    }
+
+    @Bean
+    TransactionDetailQuery transactionDetailQuery(EconomyReadStore store) {
+        return new TransactionDetailQuery(store);
+    }
+
+    @Bean
+    RedisEconomyStreamBridge redisEconomyStreamBridge(RedisCacheAdapter redis, BalanceStreamBroadcaster broadcaster) {
+        return new RedisEconomyStreamBridge(redis, broadcaster);
     }
 }

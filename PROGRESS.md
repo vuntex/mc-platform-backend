@@ -1209,3 +1209,80 @@ Branch `006-role-inheritance`.
   Zyklus/Default/Delete, Live-`ROLE_CONFIG_CHANGED` an betroffene Halter). Bestehende 002/005-Suiten
   unverändert grün (Regression). `./gradlew build` grün (365 Tests, 0 Fehler);
   `:plugin-protocol:publishToMavenLocal` grün, POM weiterhin ohne `<dependencies>`.
+
+### Web-Economy Read-Backend + SSE (Slice 1) erledigt (read-only, spec 007)
+Daten-Grundlage für den Economy-Teil des Webinterfaces: reiner Lese-/Projektions-Pfad auf den
+bestehenden Tabellen (`player_balance`, `economy_event`, `currency`, `player`) plus eine SSE-Bridge
+auf dem **bestehenden** `mc:economy:balance`-Channel. Keine neuen Events, Writes, Locking, Idempotenz,
+**kein neuer Codec**, `PlatformProtocol.create()` unverändert. Alle vier Endpunkte sind
+**web-interface-only** und liegen daher unter `/api/web/economy/**` (hinter der `/api/web/**`-JWT-Chain:
+401 ohne Token) und sind backend-autoritativ über `permission.economy.read` gegated (403).
+
+**Was steht**
+- **Bewusster Struktur-Eingriff (Muster-Leck behoben, dokumentationspflichtig):** Neuer Outbound-Port
+  `EconomyReadStore`; die reinen Projektions-Reads `findHistory()` + `circulation()` sind **1:1**
+  (byte-gleich) aus `EconomyEventStore` → `JooqEconomyReadStore` umgezogen. `EconomyEventStore` trägt
+  nur noch Event-/Versions-/Idempotenz-Semantik (`currentBalance`, `ensureZeroBalance`, `append`,
+  `transfer`, `findByTransactionId`, `findTransfer`). `EconomyHistoryService` **und** `EconomyStatsService`
+  hängen jetzt am neuen Port (Composition Root umverdrahtet). Bestehende History/Circulation-Tests
+  unverändert grün (Move-Regression).
+- **A) Sammel-Balances** `GET /api/web/economy/players/{uuid}/balances` → `PlayerBalancesResponse`
+  (alle Währungen + Display-Daten in einem Call; unbekannter Spieler → leere Liste, kein 404).
+  `EconomyReadStore.playerBalances` (Join `player_balance × currency`), `PlayerBalancesQuery`,
+  `PlayerBalancesController`.
+- **C) Serverweite History** `GET /api/web/economy/history` → `EconomyHistoryResponse` (serverweit,
+  `player=null`), Filter `currency`/`type`/`source`, Keyset-Pagination (`before`/`nextCursor`),
+  Limit-Clamp 50/200 (aus `EconomyHistoryService` geteilt). **Geteilte private Keyset-Helper**
+  `queryHistory(...)`: player-gefilterte und serverweite History delegieren an EINE Methode (optionales
+  player-Predicate + optionaler `source`-Filter, `player`-Join für `playerName`) — keine duplizierte
+  Pagination. `EconomyEventEntry`/`EconomyHistoryEntry` **additiv** um `playerUuid`/`playerName`
+  erweitert (Player-History verhaltensneutral, Top-Level `player` bleibt).
+- **D) Transaktions-Detail** `GET /api/web/economy/transactions/{transactionId}` →
+  `TransactionDetailResponse`. Einzel-Event → ein Leg (`kind=SINGLE`); Transfer → zwei Legs (beide
+  Namen, `kind=TRANSFER`, `correlationId` aus `metadata->>'correlation_id'`). Fehlendes Gegen-Leg →
+  ein Leg, kein Fehler (read-only rät nicht). Unbekannte ID → 404 `economy_transaction_not_found`.
+- **SSE) Live-Push** `GET /api/web/economy/stream[?player=]`. `EconomyStreamRegistry` (api-realtime,
+  implementiert den Application-Inbound-Port `BalanceStreamBroadcaster`) hält die `SseEmitter` und
+  macht Fan-out; `RedisEconomyStreamBridge` (`app`, spiegelt `RedisBalanceEventPublisher`) subscribt
+  **einmal** `mc:economy:balance`, decodiert via `PlatformProtocol.create()` und reicht eine neutrale
+  `BalanceStreamView` durch. `?player=` filtert serverseitig. Namen löst das Web client-seitig auf
+  (`BalanceStreamView` trägt keinen Namen). Redis-Ausfall: App startet trotzdem (Subscribe-Fehler
+  geloggt, kein Auto-Reconnect in diesem Single-Server-Slice).
+- **Neuer Index (Flyway `V16`):** `idx_event_seq_desc ON economy_event (sequence_no DESC)` für die
+  serverweite Sortierung (`idx_event_player_currency` greift ohne player-Präfix nicht). Kein
+  `source`-Index (nicht spekulativ).
+- **Gate `permission.economy.read`** (`EconomyPermissions.READ`) über den `PermissionResolver`-Port,
+  Muster 1:1 von `WebPermissionController.requireRead`.
+
+**Bewusste Grenzen (verschoben):** Admin-Writes übers Web (Slice 2), Top-Holder-Leaderboard,
+Zeitreihe „Umlauf über Zeit", CSV-Export, `playerName` im Wire-`BalanceChangedEvent`, Lookup über
+`event_id`/`sequenceNo`.
+
+**Architektur-Notizen / bewusste Eingriffe (kein verstecktes Muster-Leck):**
+- Der `EconomyReadStore`-Port-Move ist der EINZIGE Eingriff in bestehende generische/innere Logik —
+  begründet als Muster-Leck-Behebung (Projektions-Reads gehörten nie in den security-kritischen
+  Append-/Transfer-Port). Die `EconomyEventEntry`-Erweiterung ist rein additiv (wire-rückwärtskompatibel).
+- **`api-realtime` zieht jetzt zusätzlich `spring-boot-starter-security`** — damit der web-only
+  SSE-Endpunkt unter `/api/web/**` die JWT-Identität (`@AuthenticationPrincipal`) lesen und über den
+  `PermissionResolver` gaten kann (Constitution §5: SSE bleibt in api-realtime; §12: Gate
+  backend-autoritativ). Der `SecurityFilterChain` selbst bleibt in `api-rest`.
+- **Web-Endpunkt-Konvention:** web-interface-only Endpunkte liegen unter `/api/web/**`; plugin-facing
+  Endpunkte (`/api/economy/**`, `/api/players/**`) bleiben unverändert und werden NICHT dorthin verschoben.
+
+### Tests grün
+- Application (Fakes): `PlayerBalancesQueryTest`, `ServerHistoryQueryTest` (Clamp/Filter inkl. source),
+  `TransactionDetailQueryTest` (Single/Transfer/not-found); `EconomyHistoryServiceTest`/
+  `EconomyAlertMonitorTest` auf den neuen Port umgestellt (Move-Regression).
+- infra (Testcontainers, `JooqEconomyRepositoryTest` erweitert): `playerBalances` (Multi-Währung +
+  Display, leerer Spieler), serverweite History (newest-first + Namen + `source`-Filter), Player-History
+  trägt jetzt `playerUuid`/`playerName`, Transaktions-Detail (SINGLE/TRANSFER/fehlendes-Gegen-Leg/
+  unbekannt), bestehende History/Circulation/Transfer-Suiten unverändert grün.
+- Contract (`@JsonTest`, `RestDtoJsonContractTest`): `PlayerBalancesResponse`, erweiterte
+  `EconomyEventEntry`, `TransactionDetailResponse`, SSE-Frame `BalanceStreamView` (Feldnamen gepinnt,
+  kein `playerName`).
+- app-E2E (`WebEconomyReadSliceTest`, Testcontainers Postgres+Redis): Balances/History/Detail inkl.
+  leerer Liste, 400 (ungültiger type/limit), 404, sowie **403 ohne** `permission.economy.read` und
+  **401 ohne** JWT je Endpunkt; **SSE live** (echter Balance-Change über REST → SSE-Client empfängt
+  Frame; `?player=`-Filter liefert nur den passenden Spieler).
+- `./gradlew build` grün (Gesamt); `:plugin-protocol:publishToMavenLocal` grün, POM weiterhin **ohne**
+  `<dependencies>`, `PlatformProtocol.create()` unverändert.

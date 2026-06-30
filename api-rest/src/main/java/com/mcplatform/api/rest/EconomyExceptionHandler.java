@@ -1,5 +1,6 @@
 package com.mcplatform.api.rest;
 
+import com.mcplatform.application.economy.EconomyTransactionNotFoundException;
 import com.mcplatform.application.economy.port.ConcurrencyConflictException;
 import com.mcplatform.domain.economy.InsufficientFundsException;
 import java.util.Map;
@@ -28,5 +29,11 @@ public class EconomyExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, String> badRequest(IllegalArgumentException e) {
         return Map.of("error", "bad_request", "message", e.getMessage());
+    }
+
+    @ExceptionHandler(EconomyTransactionNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public Map<String, String> transactionNotFound(EconomyTransactionNotFoundException e) {
+        return Map.of("error", "economy_transaction_not_found", "message", e.getMessage());
     }
 }

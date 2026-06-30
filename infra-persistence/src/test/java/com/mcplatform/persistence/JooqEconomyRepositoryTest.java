@@ -7,6 +7,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.mcplatform.application.economy.EconomyHistoryEntry;
 import com.mcplatform.application.economy.EconomyHistoryPage;
 import com.mcplatform.application.economy.port.AppendResult;
+import com.mcplatform.application.economy.port.ProjectedBalance;
+import com.mcplatform.application.economy.port.TransactionDetail;
+import com.mcplatform.application.economy.port.TransactionKind;
+import com.mcplatform.application.economy.port.TransactionLeg;
 import com.mcplatform.application.economy.port.ConcurrencyConflictException;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
@@ -49,6 +53,7 @@ class JooqEconomyRepositoryTest {
 
     static DSLContext dsl;
     static JooqEconomyRepository economy;
+    static JooqEconomyReadStore readStore;
     static JooqPlayerRepository players;
 
     private final CurrencyCode coins = CurrencyCode.of("COINS");
@@ -64,12 +69,17 @@ class JooqEconomyRepositoryTest {
 
         dsl = DSL.using(ds, SQLDialect.POSTGRES);
         economy = new JooqEconomyRepository(dsl);
+        readStore = new JooqEconomyReadStore(dsl);
         players = new JooqPlayerRepository(dsl);
     }
 
     private PlayerId newPlayer() {
+        return newNamedPlayer("Steve");
+    }
+
+    private PlayerId newNamedPlayer(String name) {
         PlayerId p = PlayerId.of(UUID.randomUUID());
-        players.save(p, "Steve", Instant.now());
+        players.save(p, name, Instant.now());
         return p;
     }
 
@@ -273,7 +283,7 @@ class JooqEconomyRepositoryTest {
         debit(p, coins, 30);
         set(p, coins, 200);
 
-        EconomyHistoryPage page = economy.findHistory(p, Optional.empty(), Optional.empty(), null, 50);
+        EconomyHistoryPage page = readStore.findHistory(p, Optional.empty(), Optional.empty(), null, 50);
 
         assertThat(page.nextCursor()).isNull();
         assertThat(page.entries()).extracting(EconomyHistoryEntry::type)
@@ -298,7 +308,7 @@ class JooqEconomyRepositoryTest {
         credit(p, gems, 5);
         credit(p, coins, 10);
 
-        EconomyHistoryPage coinsOnly = economy.findHistory(p, Optional.of(coins), Optional.empty(), null, 50);
+        EconomyHistoryPage coinsOnly = readStore.findHistory(p, Optional.of(coins), Optional.empty(), null, 50);
 
         assertThat(coinsOnly.entries()).hasSize(2);
         assertThat(coinsOnly.entries()).allSatisfy(e -> assertThat(e.currency()).isEqualTo(coins));
@@ -312,7 +322,7 @@ class JooqEconomyRepositoryTest {
         debit(p, coins, 20);
 
         EconomyHistoryPage debitsOnly =
-                economy.findHistory(p, Optional.empty(), Optional.of(EconomyEventType.DEBITED), null, 50);
+                readStore.findHistory(p, Optional.empty(), Optional.of(EconomyEventType.DEBITED), null, 50);
 
         assertThat(debitsOnly.entries()).hasSize(2);
         assertThat(debitsOnly.entries()).allSatisfy(e -> assertThat(e.type()).isEqualTo(EconomyEventType.DEBITED));
@@ -330,7 +340,7 @@ class JooqEconomyRepositoryTest {
         Long cursor = null;
         int pages = 0;
         do {
-            EconomyHistoryPage page = economy.findHistory(p, Optional.empty(), Optional.empty(), cursor, 2);
+            EconomyHistoryPage page = readStore.findHistory(p, Optional.empty(), Optional.empty(), cursor, 2);
             assertThat(page.entries().size()).isLessThanOrEqualTo(2);
             page.entries().forEach(e -> seen.add(e.sequenceNo()));
             cursor = page.nextCursor();
@@ -350,14 +360,14 @@ class JooqEconomyRepositoryTest {
             credit(p, coins, 10);
         }
 
-        EconomyHistoryPage firstPage = economy.findHistory(p, Optional.empty(), Optional.empty(), null, 2);
+        EconomyHistoryPage firstPage = readStore.findHistory(p, Optional.empty(), Optional.empty(), null, 2);
 
         assertThat(firstPage.entries()).hasSize(2);
         assertThat(firstPage.nextCursor())
                 .isEqualTo(firstPage.entries().get(firstPage.entries().size() - 1).sequenceNo());
         // The next page starts strictly below the cursor and yields the remaining (oldest) event.
         EconomyHistoryPage secondPage =
-                economy.findHistory(p, Optional.empty(), Optional.empty(), firstPage.nextCursor(), 2);
+                readStore.findHistory(p, Optional.empty(), Optional.empty(), firstPage.nextCursor(), 2);
         assertThat(secondPage.entries()).hasSize(1);
         assertThat(secondPage.entries().get(0).sequenceNo()).isLessThan(firstPage.nextCursor());
         assertThat(secondPage.nextCursor()).isNull();
@@ -375,9 +385,9 @@ class JooqEconomyRepositoryTest {
         TransferEvents events = Transfer.prepare(balanceFrom, balanceTo, Money.of(30), correlation, "WEB:transfer");
         economy.transfer(events.out(), balanceFrom.version(), events.in(), balanceTo.version());
 
-        EconomyHistoryEntry outLeg = economy.findHistory(from, Optional.empty(),
+        EconomyHistoryEntry outLeg = readStore.findHistory(from, Optional.empty(),
                 Optional.of(EconomyEventType.TRANSFER_OUT), null, 50).entries().get(0);
-        EconomyHistoryEntry inLeg = economy.findHistory(to, Optional.empty(),
+        EconomyHistoryEntry inLeg = readStore.findHistory(to, Optional.empty(),
                 Optional.of(EconomyEventType.TRANSFER_IN), null, 50).entries().get(0);
 
         assertThat(outLeg.correlationId()).isEqualTo(correlation.value());
@@ -388,9 +398,154 @@ class JooqEconomyRepositoryTest {
         assertThat(outLeg.counterpartyUuid()).as("OUT leg → receiver").isEqualTo(to.value());
         assertThat(inLeg.counterpartyUuid()).as("IN leg → sender").isEqualTo(from.value());
 
-        EconomyHistoryEntry plainCredit = economy.findHistory(from, Optional.empty(),
+        EconomyHistoryEntry plainCredit = readStore.findHistory(from, Optional.empty(),
                 Optional.of(EconomyEventType.CREDITED), null, 50).entries().get(0);
         assertThat(plainCredit.counterpartyUuid()).as("non-transfer events have no counterparty").isNull();
+    }
+
+    // --- read-only player balances (US1) -----------------------------------
+
+    @Test
+    void playerBalancesReturnsAllCurrenciesWithDisplayMetadata() {
+        dsl.execute("INSERT INTO currency (code, display_name, symbol, decimal_places, default_balance) "
+                + "VALUES ('GEMS', 'Gems', NULL, 0, 0) ON CONFLICT (code) DO NOTHING");
+        CurrencyCode gems = CurrencyCode.of("GEMS");
+        PlayerId p = newPlayer();
+        credit(p, coins, 100);
+        credit(p, gems, 5);
+
+        List<ProjectedBalance> balances = readStore.playerBalances(p);
+
+        assertThat(balances).hasSize(2);
+        ProjectedBalance gemsBal = balances.stream()
+                .filter(b -> b.currency().equals(gems)).findFirst().orElseThrow();
+        assertThat(gemsBal.displayName()).isEqualTo("Gems");
+        assertThat(gemsBal.symbol()).isNull();
+        assertThat(gemsBal.decimalPlaces()).isZero();
+        assertThat(gemsBal.balance()).isEqualTo(Money.of(5));
+        ProjectedBalance coinsBal = balances.stream()
+                .filter(b -> b.currency().equals(coins)).findFirst().orElseThrow();
+        assertThat(coinsBal.balance()).isEqualTo(Money.of(100));
+        assertThat(coinsBal.displayName()).isNotBlank();
+    }
+
+    @Test
+    void playerBalancesEmptyForUnknownPlayer() {
+        assertThat(readStore.playerBalances(PlayerId.of(UUID.randomUUID()))).isEmpty();
+    }
+
+    // --- server-wide history (US2) -----------------------------------------
+
+    @Test
+    void serverHistoryCarriesPlayerUuidAndNameAndIsNewestFirst() {
+        PlayerId alice = newNamedPlayer("ServerHistAlice");
+        credit(alice, coins, 11);
+
+        EconomyHistoryPage page = readStore.findServerHistory(
+                Optional.empty(), Optional.empty(), Optional.empty(), null, 200);
+
+        // global newest-first across all players in the store
+        assertThat(page.entries()).extracting(EconomyHistoryEntry::sequenceNo)
+                .isSortedAccordingTo((a, b) -> Long.compare(b, a));
+        assertThat(page.entries()).anySatisfy(e -> {
+            assertThat(e.playerUuid()).isEqualTo(alice.value());
+            assertThat(e.playerName()).isEqualTo("ServerHistAlice");
+        });
+    }
+
+    @Test
+    void serverHistoryFiltersBySource() {
+        PlayerId p = newNamedPlayer("SrcFilter");
+        Balance b = economy.currentBalance(p, coins);
+        economy.append(b.credit(Money.of(5), TransactionId.random(), "WEBSHOP-007"), b.version());
+        credit(p, coins, 7); // a second event with the default "TEST" source
+
+        EconomyHistoryPage webshop = readStore.findServerHistory(
+                Optional.empty(), Optional.empty(), Optional.of("WEBSHOP-007"), null, 50);
+
+        assertThat(webshop.entries()).hasSize(1);
+        assertThat(webshop.entries().get(0).source()).isEqualTo("WEBSHOP-007");
+        assertThat(webshop.entries().get(0).playerName()).isEqualTo("SrcFilter");
+    }
+
+    @Test
+    void playerHistoryEntriesAlsoCarryPlayerUuidAndName() {
+        PlayerId p = newNamedPlayer("HistName");
+        credit(p, coins, 5);
+
+        EconomyHistoryEntry e = readStore.findHistory(p, Optional.empty(), Optional.empty(), null, 50)
+                .entries().get(0);
+        assertThat(e.playerUuid()).isEqualTo(p.value());
+        assertThat(e.playerName()).isEqualTo("HistName");
+    }
+
+    // --- transaction detail (US3) ------------------------------------------
+
+    @Test
+    void transactionDetailForSingleEventHasOneLeg() {
+        PlayerId p = newNamedPlayer("DetailSingle");
+        Balance b = economy.currentBalance(p, coins);
+        TransactionId tx = TransactionId.random();
+        economy.append(b.credit(Money.of(42), tx, "WEB"), b.version());
+
+        TransactionDetail d = readStore.findTransaction(tx).orElseThrow();
+
+        assertThat(d.kind()).isEqualTo(TransactionKind.SINGLE);
+        assertThat(d.correlationId()).isNull();
+        assertThat(d.amount()).isEqualTo(Money.of(42));
+        assertThat(d.legs()).hasSize(1);
+        assertThat(d.legs().get(0).playerName()).isEqualTo("DetailSingle");
+        assertThat(d.legs().get(0).eventType()).isEqualTo(EconomyEventType.CREDITED);
+    }
+
+    @Test
+    void transactionDetailForTransferHasTwoLegsWithBothNames() {
+        PlayerId from = newNamedPlayer("DetailSender");
+        PlayerId to = newNamedPlayer("DetailReceiver");
+        credit(from, coins, 100);
+        Balance bf = economy.currentBalance(from, coins);
+        Balance bt = economy.currentBalance(to, coins);
+        TransferId correlation = TransferId.random();
+        TransferEvents events = Transfer.prepare(bf, bt, Money.of(30), correlation, "WEB:transfer");
+        economy.transfer(events.out(), bf.version(), events.in(), bt.version());
+
+        TransactionDetail d = readStore.findTransaction(events.out().transactionId()).orElseThrow();
+
+        assertThat(d.kind()).isEqualTo(TransactionKind.TRANSFER);
+        assertThat(d.correlationId()).isEqualTo(correlation.value());
+        assertThat(d.legs()).hasSize(2);
+        assertThat(d.legs()).extracting(TransactionLeg::playerName)
+                .containsExactlyInAnyOrder("DetailSender", "DetailReceiver");
+        assertThat(d.legs()).extracting(TransactionLeg::eventType)
+                .contains(EconomyEventType.TRANSFER_OUT, EconomyEventType.TRANSFER_IN);
+    }
+
+    @Test
+    void transactionDetailWithMissingCounterLegDegradesToOneLeg() {
+        PlayerId from = newNamedPlayer("DegradeSender");
+        PlayerId to = newNamedPlayer("DegradeReceiver");
+        credit(from, coins, 100);
+        Balance bf = economy.currentBalance(from, coins);
+        Balance bt = economy.currentBalance(to, coins);
+        TransferId correlation = TransferId.random();
+        TransferEvents events = Transfer.prepare(bf, bt, Money.of(30), correlation, "WEB:transfer");
+        economy.transfer(events.out(), bf.version(), events.in(), bt.version());
+        // simulate inconsistency: the IN leg vanished
+        dsl.deleteFrom(ECONOMY_EVENT)
+                .where(ECONOMY_EVENT.TRANSACTION_ID.eq(events.in().transactionId().value()))
+                .execute();
+
+        TransactionDetail d = readStore.findTransaction(events.out().transactionId()).orElseThrow();
+
+        assertThat(d.kind()).isEqualTo(TransactionKind.TRANSFER); // still a transfer
+        assertThat(d.correlationId()).isEqualTo(correlation.value());
+        assertThat(d.legs()).hasSize(1); // only the surviving leg, no error, nothing invented
+        assertThat(d.legs().get(0).eventType()).isEqualTo(EconomyEventType.TRANSFER_OUT);
+    }
+
+    @Test
+    void transactionDetailUnknownIdIsEmpty() {
+        assertThat(readStore.findTransaction(TransactionId.random())).isEmpty();
     }
 
     private long credit(PlayerId p, CurrencyCode c, long amount) {

@@ -46,5 +46,25 @@ public final class EconomyEndpoints {
             new EndpointDescriptor<>(HttpMethod.GET, "/api/economy/stats/{currency}",
                     Void.class, EconomyStatsResponse.class);
 
+    // --- web-interface-only read surface (spec 007), behind the /api/web/** JWT chain ---------------
+
+    /** GET all of a player's balances (every currency) in one call, with currency display metadata. */
+    public static final EndpointDescriptor<Void, PlayerBalancesResponse> LIST_BALANCES =
+            new EndpointDescriptor<>(HttpMethod.GET, "/api/web/economy/players/{uuid}/balances",
+                    Void.class, PlayerBalancesResponse.class);
+
+    /**
+     * GET the server-wide economy history (all players), newest-first. Optional query params:
+     * {@code currency}, {@code type}, {@code source}, {@code before} (keyset cursor), {@code limit}.
+     */
+    public static final EndpointDescriptor<Void, EconomyHistoryResponse> SERVER_HISTORY =
+            new EndpointDescriptor<>(HttpMethod.GET, "/api/web/economy/history",
+                    Void.class, EconomyHistoryResponse.class);
+
+    /** GET one transaction's detail by its business {@code transactionId} (single event or transfer). */
+    public static final EndpointDescriptor<Void, TransactionDetailResponse> GET_TRANSACTION =
+            new EndpointDescriptor<>(HttpMethod.GET, "/api/web/economy/transactions/{transactionId}",
+                    Void.class, TransactionDetailResponse.class);
+
     private EconomyEndpoints() {}
 }

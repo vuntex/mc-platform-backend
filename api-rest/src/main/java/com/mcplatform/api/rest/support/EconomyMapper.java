@@ -3,6 +3,8 @@ package com.mcplatform.api.rest.support;
 import com.mcplatform.application.economy.EconomyHistoryEntry;
 import com.mcplatform.application.economy.EconomyHistoryPage;
 import com.mcplatform.application.economy.TransferOutcome;
+import com.mcplatform.application.economy.port.ProjectedBalance;
+import com.mcplatform.application.economy.port.TransactionDetail;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
 import com.mcplatform.domain.economy.EconomyEventType;
@@ -12,6 +14,10 @@ import com.mcplatform.protocol.economy.AmountRequest;
 import com.mcplatform.protocol.economy.BalanceResponse;
 import com.mcplatform.protocol.economy.EconomyEventEntry;
 import com.mcplatform.protocol.economy.EconomyHistoryResponse;
+import com.mcplatform.protocol.economy.PlayerBalanceEntry;
+import com.mcplatform.protocol.economy.PlayerBalancesResponse;
+import com.mcplatform.protocol.economy.TransactionDetailResponse;
+import com.mcplatform.protocol.economy.TransactionLegDto;
 import com.mcplatform.protocol.economy.TransferRequest;
 import com.mcplatform.protocol.economy.TransferResponse;
 import java.util.List;
@@ -37,6 +43,19 @@ public final class EconomyMapper {
 
     public static TransferResponse transferResponse(TransferOutcome outcome) {
         return new TransferResponse(balanceResponse(outcome.from()), balanceResponse(outcome.to()));
+    }
+
+    /** Aggregate of all a player's balances with currency display metadata (spec 007, US1). */
+    public static PlayerBalancesResponse playerBalances(UUID player, List<ProjectedBalance> balances) {
+        List<PlayerBalanceEntry> entries = balances.stream()
+                .map(b -> new PlayerBalanceEntry(
+                        b.currency().value(),
+                        b.displayName(),
+                        b.symbol(),
+                        b.decimalPlaces(),
+                        b.balance().units()))
+                .toList();
+        return new PlayerBalancesResponse(player, entries);
     }
 
     /** Stable id from the request, or a fresh random one — keeps credit/debit/set idempotent on retry. */
@@ -83,6 +102,38 @@ public final class EconomyMapper {
         return new EconomyHistoryResponse(player, entries, page.nextCursor());
     }
 
+    /** Server-wide history (spec 007, US2): no single player, so {@code player} is {@code null}; the
+     * "who" of each event sits on the entry ({@code playerUuid}/{@code playerName}). */
+    public static EconomyHistoryResponse serverHistoryResponse(EconomyHistoryPage page) {
+        return historyResponse(null, page);
+    }
+
+    /** Optional free-form {@code source} filter from a query param: blank/absent → no filter. */
+    public static Optional<String> sourceFilter(String source) {
+        return (source == null || source.isBlank()) ? Optional.empty() : Optional.of(source);
+    }
+
+    /** Transaction detail (spec 007, US3): SINGLE → one leg, TRANSFER → both legs. */
+    public static TransactionDetailResponse transactionDetail(TransactionDetail detail) {
+        List<TransactionLegDto> legs = detail.legs().stream()
+                .map(l -> new TransactionLegDto(
+                        l.playerUuid(), l.playerName(), l.eventType().name(), l.balanceAfter().units()))
+                .toList();
+        return new TransactionDetailResponse(
+                detail.transactionId().value(),
+                detail.correlationId(),
+                detail.kind().name(),
+                detail.currency().value(),
+                detail.displayName(),
+                detail.symbol(),
+                detail.decimalPlaces(),
+                detail.amount().units(),
+                detail.source(),
+                detail.metadata(),
+                detail.occurredAt().toEpochMilli(),
+                legs);
+    }
+
     private static EconomyEventEntry historyEntry(EconomyHistoryEntry entry) {
         return new EconomyEventEntry(
                 entry.sequenceNo(),
@@ -94,6 +145,8 @@ public final class EconomyMapper {
                 entry.source(),
                 entry.correlationId(),
                 entry.counterpartyUuid(),
-                entry.occurredAt().toEpochMilli());
+                entry.occurredAt().toEpochMilli(),
+                entry.playerUuid(),
+                entry.playerName());
     }
 }

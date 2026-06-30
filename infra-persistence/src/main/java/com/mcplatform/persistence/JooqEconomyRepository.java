@@ -3,34 +3,25 @@ package com.mcplatform.persistence;
 import static com.mcplatform.persistence.jooq.Tables.ECONOMY_EVENT;
 import static com.mcplatform.persistence.jooq.Tables.PLAYER_BALANCE;
 
-import com.mcplatform.application.economy.EconomyHistoryEntry;
-import com.mcplatform.application.economy.EconomyHistoryPage;
 import com.mcplatform.application.economy.port.AppendResult;
-import com.mcplatform.application.economy.port.CirculationStats;
 import com.mcplatform.application.economy.port.ConcurrencyConflictException;
 import com.mcplatform.application.economy.port.EconomyEventStore;
 import com.mcplatform.application.economy.port.TransferResult;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.CurrencyCode;
-import com.mcplatform.domain.economy.EconomyEventType;
 import com.mcplatform.domain.economy.Money;
 import com.mcplatform.domain.economy.PendingEconomyEvent;
 import com.mcplatform.domain.economy.TransactionId;
 import com.mcplatform.domain.economy.TransferId;
 import com.mcplatform.domain.player.PlayerId;
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.jooq.Condition;
 import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.JSONB;
 import org.jooq.exception.IntegrityConstraintViolationException;
-import org.jooq.impl.DSL;
 
 /**
  * jOOQ adapter over the event-sourced economy (PROGRESS.md sections 3, 6 &amp; 7). Writes happen in a
@@ -45,20 +36,6 @@ public final class JooqEconomyRepository implements EconomyEventStore {
 
     public JooqEconomyRepository(DSLContext dsl) {
         this.dsl = dsl;
-    }
-
-    @Override
-    public List<CirculationStats> circulation() {
-        return dsl.select(PLAYER_BALANCE.CURRENCY_CODE, DSL.sum(PLAYER_BALANCE.BALANCE), DSL.count())
-                .from(PLAYER_BALANCE)
-                .groupBy(PLAYER_BALANCE.CURRENCY_CODE)
-                .fetch(r -> {
-                    BigDecimal sum = r.value2();
-                    return new CirculationStats(
-                            CurrencyCode.of(r.value1()),
-                            sum == null ? 0L : sum.longValue(),
-                            r.value3());
-                });
     }
 
     @Override
@@ -166,70 +143,6 @@ public final class JooqEconomyRepository implements EconomyEventStore {
         AppendResult out = lookup(dsl, correlationId.outboundTransactionId());
         AppendResult in = lookup(dsl, correlationId.inboundTransactionId());
         return (out != null && in != null) ? Optional.of(new TransferResult(out, in)) : Optional.empty();
-    }
-
-    @Override
-    public EconomyHistoryPage findHistory(PlayerId player, Optional<CurrencyCode> currency,
-            Optional<EconomyEventType> eventType, Long cursorBeforeSeqNo, int limit) {
-        if (limit <= 0) {
-            throw new IllegalArgumentException("limit must be positive: " + limit);
-        }
-
-        Condition where = ECONOMY_EVENT.PLAYER_UUID.eq(player.value());
-        if (currency.isPresent()) {
-            where = where.and(ECONOMY_EVENT.CURRENCY_CODE.eq(currency.get().value()));
-        }
-        if (eventType.isPresent()) {
-            where = where.and(ECONOMY_EVENT.EVENT_TYPE.eq(eventType.get().name()));
-        }
-        if (cursorBeforeSeqNo != null) {
-            where = where.and(ECONOMY_EVENT.SEQUENCE_NO.lt(cursorBeforeSeqNo)); // keyset cursor (exclusive)
-        }
-
-        // correlation_id lives in the JSONB metadata; ->> yields it as text (null when absent).
-        Field<String> correlationId =
-                DSL.field("{0} ->> 'correlation_id'", String.class, ECONOMY_EVENT.METADATA);
-
-        // Counterparty of a transfer = the other leg's player. The two legs share a correlation_id and
-        // differ in player; a correlated subquery picks the opposite leg. NULL for non-transfer rows
-        // (no correlation_id → no match). No schema column needed; works on existing data.
-        Field<UUID> counterparty = DSL.field(
-                "(select o.player_uuid from economy_event o where o.metadata ->> 'correlation_id' = {0}"
-                        + " and o.player_uuid <> {1} limit 1)",
-                UUID.class, correlationId, ECONOMY_EVENT.PLAYER_UUID);
-
-        // Keyset pagination on the (player_uuid, currency_code, sequence_no) index, newest-first. Fetch
-        // one extra row to decide whether an older page exists without a second count query.
-        var records = dsl.select(ECONOMY_EVENT.SEQUENCE_NO, ECONOMY_EVENT.CURRENCY_CODE,
-                        ECONOMY_EVENT.EVENT_TYPE, ECONOMY_EVENT.AMOUNT, ECONOMY_EVENT.BALANCE_AFTER,
-                        ECONOMY_EVENT.TRANSACTION_ID, ECONOMY_EVENT.SOURCE, correlationId, counterparty,
-                        ECONOMY_EVENT.CREATED_AT)
-                .from(ECONOMY_EVENT)
-                .where(where)
-                .orderBy(ECONOMY_EVENT.SEQUENCE_NO.desc())
-                .limit(limit + 1)
-                .fetch();
-
-        boolean hasMore = records.size() > limit;
-        int pageSize = Math.min(records.size(), limit);
-        List<EconomyHistoryEntry> entries = new ArrayList<>(pageSize);
-        for (int i = 0; i < pageSize; i++) {
-            var r = records.get(i);
-            entries.add(new EconomyHistoryEntry(
-                    r.value1(),
-                    CurrencyCode.of(r.value2()),
-                    EconomyEventType.valueOf(r.value3()),
-                    Money.of(r.value4()),
-                    Money.of(r.value5()),
-                    TransactionId.of(r.value6()),
-                    r.value7(),
-                    r.value8() == null ? null : UUID.fromString(r.value8()),
-                    r.value9(),
-                    r.value10().toInstant()));
-        }
-        // When more rows exist, the next page starts strictly below the last entry's sequence_no.
-        Long nextCursor = hasMore ? entries.get(entries.size() - 1).sequenceNo() : null;
-        return new EconomyHistoryPage(entries, nextCursor);
     }
 
     // --- helpers -----------------------------------------------------------

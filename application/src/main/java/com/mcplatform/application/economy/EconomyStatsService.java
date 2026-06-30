@@ -1,7 +1,7 @@
 package com.mcplatform.application.economy;
 
 import com.mcplatform.application.economy.port.CirculationStats;
-import com.mcplatform.application.economy.port.EconomyEventStore;
+import com.mcplatform.application.economy.port.EconomyReadStore;
 import com.mcplatform.domain.economy.CurrencyCode;
 
 import java.util.Collection;
@@ -16,10 +16,10 @@ import java.util.Optional;
  */
 public final class EconomyStatsService {
 
-    private final EconomyEventStore store;
+    private final EconomyReadStore store;
     private volatile Map<String, CirculationStats> byCurrency = Map.of();
 
-    public EconomyStatsService(EconomyEventStore store) {
+    public EconomyStatsService(EconomyReadStore store) {
         this.store = store;
     }
 

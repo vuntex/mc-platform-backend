@@ -1,6 +1,6 @@
 package com.mcplatform.application.economy;
 
-import com.mcplatform.application.economy.port.EconomyEventStore;
+import com.mcplatform.application.economy.port.EconomyReadStore;
 import com.mcplatform.domain.economy.CurrencyCode;
 import com.mcplatform.domain.economy.EconomyEventType;
 import com.mcplatform.domain.player.PlayerId;
@@ -20,9 +20,9 @@ public final class EconomyHistoryService {
     public static final int DEFAULT_LIMIT = 50;
     public static final int MAX_LIMIT = 200;
 
-    private final EconomyEventStore store;
+    private final EconomyReadStore store;
 
-    public EconomyHistoryService(EconomyEventStore store) {
+    public EconomyHistoryService(EconomyReadStore store) {
         this.store = store;
     }
 
@@ -35,7 +35,12 @@ public final class EconomyHistoryService {
         return store.findHistory(player, currency, eventType, cursorBeforeSeqNo, clampLimit(limit));
     }
 
-    private static int clampLimit(Integer requested) {
+    /**
+     * Server-owned page-size policy, shared by all economy history reads (player- and server-wide):
+     * {@code null} → {@value #DEFAULT_LIMIT}; non-positive → {@link IllegalArgumentException} (→ 400);
+     * larger than {@value #MAX_LIMIT} → clamped down. Single source so the two paths never drift.
+     */
+    public static int clampLimit(Integer requested) {
         if (requested == null) {
             return DEFAULT_LIMIT;
         }

@@ -3,8 +3,15 @@ package com.mcplatform.bootstrap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mcplatform.application.economy.BalanceStreamView;
 import com.mcplatform.protocol.economy.AmountRequest;
 import com.mcplatform.protocol.economy.BalanceResponse;
+import com.mcplatform.protocol.economy.EconomyEventEntry;
+import com.mcplatform.protocol.economy.EconomyHistoryResponse;
+import com.mcplatform.protocol.economy.PlayerBalanceEntry;
+import com.mcplatform.protocol.economy.PlayerBalancesResponse;
+import com.mcplatform.protocol.economy.TransactionDetailResponse;
+import com.mcplatform.protocol.economy.TransactionLegDto;
 import com.mcplatform.protocol.economy.TransferRequest;
 import com.mcplatform.protocol.economy.TransferResponse;
 import com.mcplatform.protocol.session.PlayerRequest;
@@ -69,6 +76,57 @@ class RestDtoJsonContractTest {
         assertThat(json.readTree(json.writeValueAsString(resp)).fieldNames()).toIterable()
                 .containsExactlyInAnyOrder("from", "to");
         assertThat(json.readValue(json.writeValueAsString(resp), TransferResponse.class)).isEqualTo(resp);
+    }
+
+    @Test
+    void playerBalancesResponseMatchesBackendJson() throws Exception {
+        PlayerBalancesResponse dto = new PlayerBalancesResponse(PLAYER,
+                List.of(new PlayerBalanceEntry("COINS", "Coins", "$", 0, 100L)));
+
+        assertThat(json.readTree(json.writeValueAsString(dto)).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("player", "balances");
+        assertThat(json.readTree(json.writeValueAsString(dto)).get("balances").get(0).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("currencyCode", "displayName", "symbol", "decimalPlaces", "balance");
+        assertThat(json.readValue(json.writeValueAsString(dto), PlayerBalancesResponse.class)).isEqualTo(dto);
+    }
+
+    @Test
+    void economyHistoryEntryCarriesPlayerFieldsOnTheWire() throws Exception {
+        EconomyEventEntry entry = new EconomyEventEntry(412L, "COINS", "CREDITED", 50L, 50L, OTHER,
+                "WEBSHOP", null, null, 1_750_000_000_000L, PLAYER, "Steve");
+        EconomyHistoryResponse resp = new EconomyHistoryResponse(null, List.of(entry), 405L);
+
+        assertThat(json.readTree(json.writeValueAsString(resp)).get("entries").get(0).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("sequenceNo", "currencyCode", "eventType", "amount", "balanceAfter",
+                        "transactionId", "source", "correlationId", "counterpartyUuid", "timestampEpochMilli",
+                        "playerUuid", "playerName");
+        assertThat(json.readValue(json.writeValueAsString(resp), EconomyHistoryResponse.class)).isEqualTo(resp);
+    }
+
+    @Test
+    void transactionDetailResponseMatchesBackendJson() throws Exception {
+        TransactionDetailResponse dto = new TransactionDetailResponse(PLAYER, null, "SINGLE", "COINS",
+                "Coins", "$", 0, 42L, "WEB", "{\"k\":\"v\"}", 1_750_000_000_000L,
+                List.of(new TransactionLegDto(OTHER, "Steve", "CREDITED", 42L)));
+
+        assertThat(json.readTree(json.writeValueAsString(dto)).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("transactionId", "correlationId", "kind", "currencyCode",
+                        "displayName", "symbol", "decimalPlaces", "amount", "source", "metadata",
+                        "timestampEpochMilli", "legs");
+        assertThat(json.readTree(json.writeValueAsString(dto)).get("legs").get(0).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("playerUuid", "playerName", "eventType", "balanceAfter");
+        assertThat(json.readValue(json.writeValueAsString(dto), TransactionDetailResponse.class)).isEqualTo(dto);
+    }
+
+    @Test
+    void balanceStreamViewIsTheSseFrameContract() throws Exception {
+        // The SSE data: frame is exactly this view serialised — pin its field names (FR-020: no name).
+        BalanceStreamView view = new BalanceStreamView(PLAYER, "COINS", "CREDITED", 10L, 110L, 413L,
+                OTHER, "WEB", null, 1_750_000_000_000L);
+        assertThat(json.readTree(json.writeValueAsString(view)).fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("playerUuid", "currencyCode", "eventType", "amount", "balance",
+                        "version", "transactionId", "source", "correlationId", "timestampEpochMilli");
+        assertThat(json.writeValueAsString(view)).doesNotContain("playerName");
     }
 
     @Test
