@@ -6,6 +6,7 @@ import com.mcplatform.application.permission.port.GrantType;
 import com.mcplatform.application.permission.port.PermissionChangePublisher;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
 import com.mcplatform.application.permission.port.RoleAuditPort;
+import com.mcplatform.application.permission.port.RoleInheritanceRepository;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.domain.permission.PermissionChangeType;
@@ -136,6 +137,55 @@ final class PermissionFakes {
         @Override
         public void removePermission(RoleId id, String permission) {
             perms.getOrDefault(id.value(), new ArrayList<>()).remove(permission);
+        }
+    }
+
+    /** In-memory inheritance edges: child -> set of direct parents. */
+    static final class FakeRoleInheritanceRepository implements RoleInheritanceRepository {
+        final Map<Long, Set<Long>> parents = new LinkedHashMap<>();
+
+        @Override
+        public void add(RoleId child, RoleId parent, UUID actor) {
+            parents.computeIfAbsent(child.value(), k -> new java.util.LinkedHashSet<>()).add(parent.value());
+        }
+
+        @Override
+        public boolean remove(RoleId child, RoleId parent) {
+            Set<Long> p = parents.get(child.value());
+            return p != null && p.remove(parent.value());
+        }
+
+        @Override
+        public List<RoleId> directParents(RoleId child) {
+            return parents.getOrDefault(child.value(), Set.of()).stream().map(RoleId::of).toList();
+        }
+
+        @Override
+        public List<RoleId> directChildren(RoleId parent) {
+            return parents.entrySet().stream()
+                    .filter(e -> e.getValue().contains(parent.value()))
+                    .map(e -> RoleId.of(e.getKey()))
+                    .toList();
+        }
+
+        @Override
+        public List<RoleId> dependents(RoleId role) {
+            Set<Long> result = new java.util.LinkedHashSet<>();
+            java.util.Deque<Long> stack = new java.util.ArrayDeque<>();
+            stack.push(role.value());
+            Set<Long> visited = new HashSet<>();
+            while (!stack.isEmpty()) {
+                long cur = stack.pop();
+                if (!visited.add(cur)) {
+                    continue;
+                }
+                for (RoleId child : directChildren(RoleId.of(cur))) {
+                    if (result.add(child.value())) {
+                        stack.push(child.value());
+                    }
+                }
+            }
+            return result.stream().map(RoleId::of).toList();
         }
     }
 

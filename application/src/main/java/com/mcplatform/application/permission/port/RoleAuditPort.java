@@ -12,7 +12,10 @@ import java.util.UUID;
  */
 public interface RoleAuditPort {
 
-    enum Action { ROLE_CREATE, ROLE_UPDATE, ROLE_DELETE, ROLE_PERMISSION_ADD, ROLE_PERMISSION_REMOVE }
+    enum Action {
+        ROLE_CREATE, ROLE_UPDATE, ROLE_DELETE, ROLE_PERMISSION_ADD, ROLE_PERMISSION_REMOVE,
+        ROLE_INHERITANCE_ADD, ROLE_INHERITANCE_REMOVE
+    }
 
     /**
      * One audit row. {@code roleName} is a snapshot (useful after deletion); {@code permission} is set

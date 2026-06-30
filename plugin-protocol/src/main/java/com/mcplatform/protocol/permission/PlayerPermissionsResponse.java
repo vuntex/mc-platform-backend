@@ -12,5 +12,6 @@ public record PlayerPermissionsResponse(
         List<ActiveGrant> roles,
         List<ActiveGrant> permissions,
         List<String> effectivePermissions,
+        List<EffectivePermissionEntry> sources,
         RoleDisplay display) {
 }

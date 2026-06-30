@@ -6,6 +6,7 @@ import com.mcplatform.application.economy.port.PlayerRepository;
 import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.RoleAuditPort;
 import com.mcplatform.application.permission.port.PlayerGrantRepository;
+import com.mcplatform.application.permission.port.RoleInheritanceRepository;
 import com.mcplatform.application.permission.port.RoleRepository;
 import com.mcplatform.application.punishment.port.PunishmentEventStore;
 import com.mcplatform.application.punishment.port.PunishmentTemplateRepository;
@@ -26,6 +27,7 @@ import com.mcplatform.persistence.JooqPunishmentTemplateRepository;
 import com.mcplatform.persistence.JooqLinkTokenRepository;
 import com.mcplatform.persistence.JooqRefreshTokenRepository;
 import com.mcplatform.persistence.JooqReportRepository;
+import com.mcplatform.persistence.JooqRoleInheritanceRepository;
 import com.mcplatform.persistence.JooqRoleRepository;
 import com.mcplatform.persistence.JooqWebAccountRepository;
 import javax.sql.DataSource;
@@ -90,6 +92,11 @@ public class PersistenceConfig {
     @Bean
     PlayerGrantRepository playerGrantRepository(DSLContext dsl) {
         return new JooqPlayerGrantRepository(dsl);
+    }
+
+    @Bean
+    RoleInheritanceRepository roleInheritanceRepository(DSLContext dsl) {
+        return new JooqRoleInheritanceRepository(dsl);
     }
 
     @Bean
