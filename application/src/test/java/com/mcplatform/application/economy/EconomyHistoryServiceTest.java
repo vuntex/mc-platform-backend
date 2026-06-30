@@ -86,6 +86,11 @@ class EconomyHistoryServiceTest {
         int lastLimit;
 
         @Override
+        public java.util.List<com.mcplatform.application.economy.port.CirculationStats> circulation() {
+            return java.util.List.of();
+        }
+
+        @Override
         public EconomyHistoryPage findHistory(PlayerId player, Optional<CurrencyCode> currency,
                 Optional<EconomyEventType> eventType, Long cursorBeforeSeqNo, int limit) {
             this.lastPlayer = player;

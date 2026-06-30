@@ -6,6 +6,7 @@ import static com.mcplatform.persistence.jooq.Tables.PLAYER_BALANCE;
 import com.mcplatform.application.economy.EconomyHistoryEntry;
 import com.mcplatform.application.economy.EconomyHistoryPage;
 import com.mcplatform.application.economy.port.AppendResult;
+import com.mcplatform.application.economy.port.CirculationStats;
 import com.mcplatform.application.economy.port.ConcurrencyConflictException;
 import com.mcplatform.application.economy.port.EconomyEventStore;
 import com.mcplatform.application.economy.port.TransferResult;
@@ -17,6 +18,7 @@ import com.mcplatform.domain.economy.PendingEconomyEvent;
 import com.mcplatform.domain.economy.TransactionId;
 import com.mcplatform.domain.economy.TransferId;
 import com.mcplatform.domain.player.PlayerId;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -43,6 +45,20 @@ public final class JooqEconomyRepository implements EconomyEventStore {
 
     public JooqEconomyRepository(DSLContext dsl) {
         this.dsl = dsl;
+    }
+
+    @Override
+    public List<CirculationStats> circulation() {
+        return dsl.select(PLAYER_BALANCE.CURRENCY_CODE, DSL.sum(PLAYER_BALANCE.BALANCE), DSL.count())
+                .from(PLAYER_BALANCE)
+                .groupBy(PLAYER_BALANCE.CURRENCY_CODE)
+                .fetch(r -> {
+                    BigDecimal sum = r.value2();
+                    return new CirculationStats(
+                            CurrencyCode.of(r.value1()),
+                            sum == null ? 0L : sum.longValue(),
+                            r.value3());
+                });
     }
 
     @Override
@@ -174,11 +190,20 @@ public final class JooqEconomyRepository implements EconomyEventStore {
         Field<String> correlationId =
                 DSL.field("{0} ->> 'correlation_id'", String.class, ECONOMY_EVENT.METADATA);
 
+        // Counterparty of a transfer = the other leg's player. The two legs share a correlation_id and
+        // differ in player; a correlated subquery picks the opposite leg. NULL for non-transfer rows
+        // (no correlation_id → no match). No schema column needed; works on existing data.
+        Field<UUID> counterparty = DSL.field(
+                "(select o.player_uuid from economy_event o where o.metadata ->> 'correlation_id' = {0}"
+                        + " and o.player_uuid <> {1} limit 1)",
+                UUID.class, correlationId, ECONOMY_EVENT.PLAYER_UUID);
+
         // Keyset pagination on the (player_uuid, currency_code, sequence_no) index, newest-first. Fetch
         // one extra row to decide whether an older page exists without a second count query.
         var records = dsl.select(ECONOMY_EVENT.SEQUENCE_NO, ECONOMY_EVENT.CURRENCY_CODE,
                         ECONOMY_EVENT.EVENT_TYPE, ECONOMY_EVENT.AMOUNT, ECONOMY_EVENT.BALANCE_AFTER,
-                        ECONOMY_EVENT.TRANSACTION_ID, ECONOMY_EVENT.SOURCE, correlationId, ECONOMY_EVENT.CREATED_AT)
+                        ECONOMY_EVENT.TRANSACTION_ID, ECONOMY_EVENT.SOURCE, correlationId, counterparty,
+                        ECONOMY_EVENT.CREATED_AT)
                 .from(ECONOMY_EVENT)
                 .where(where)
                 .orderBy(ECONOMY_EVENT.SEQUENCE_NO.desc())
@@ -199,7 +224,8 @@ public final class JooqEconomyRepository implements EconomyEventStore {
                     TransactionId.of(r.value6()),
                     r.value7(),
                     r.value8() == null ? null : UUID.fromString(r.value8()),
-                    r.value9().toInstant()));
+                    r.value9(),
+                    r.value10().toInstant()));
         }
         // When more rows exist, the next page starts strictly below the last entry's sequence_no.
         Long nextCursor = hasMore ? entries.get(entries.size() - 1).sequenceNo() : null;
@@ -254,8 +280,22 @@ public final class JooqEconomyRepository implements EconomyEventStore {
                     .onConflictDoNothing()
                     .execute();
             if (inserts == 0) {
-                throw new ConcurrencyConflictException(
-                        "balance projection already exists for " + player + "/" + currency);
+                // The row already exists AT version 0 — e.g. materialised by ensureZeroBalance (a
+                // default-0 currency). That is NOT a conflict: mutate it in place, still optimistically
+                // guarded on version 0. Without this, a version-0 row could never be written (every
+                // append would hit the INSERT path and "conflict" forever).
+                int updates = tx.update(PLAYER_BALANCE)
+                        .set(PLAYER_BALANCE.BALANCE, balanceAfter)
+                        .set(PLAYER_BALANCE.VERSION, sequenceNo)
+                        .set(PLAYER_BALANCE.UPDATED_AT, OffsetDateTime.now(ZoneOffset.UTC))
+                        .where(PLAYER_BALANCE.PLAYER_UUID.eq(player)
+                                .and(PLAYER_BALANCE.CURRENCY_CODE.eq(currency))
+                                .and(PLAYER_BALANCE.VERSION.eq(0L)))
+                        .execute();
+                if (updates == 0) {
+                    throw new ConcurrencyConflictException(
+                            "version mismatch for " + player + "/" + currency + " (expected 0)");
+                }
             }
         } else {
             int updates = tx.update(PLAYER_BALANCE)

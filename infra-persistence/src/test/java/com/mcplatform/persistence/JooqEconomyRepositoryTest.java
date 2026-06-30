@@ -95,6 +95,24 @@ class JooqEconomyRepositoryTest {
     }
 
     @Test
+    void appendOnExistingVersionZeroRowSucceeds() {
+        PlayerId p = newPlayer();
+        economy.ensureZeroBalance(p, coins); // materialises the projection row AT version 0
+
+        Balance b0 = economy.currentBalance(p, coins);
+        assertThat(b0.version()).isZero();
+        assertThat(b0.amount()).isEqualTo(Money.of(0));
+
+        // Regression: a row already at version 0 must be writable. Previously the expectedVersion==0
+        // branch only INSERTed, so it conflicted forever (409 concurrency_conflict) and the player was
+        // permanently stuck on every economy write.
+        AppendResult credit = economy.append(b0.credit(Money.of(50_000), TransactionId.random(), "TEST"), b0.version());
+        assertThat(credit.balanceAfter()).isEqualTo(Money.of(50_000));
+        assertThat(credit.version()).isPositive();
+        assertThat(economy.currentBalance(p, coins).amount()).isEqualTo(Money.of(50_000));
+    }
+
+    @Test
     void staleVersionIsRejected() {
         PlayerId p = newPlayer();
 
@@ -365,6 +383,14 @@ class JooqEconomyRepositoryTest {
         assertThat(outLeg.correlationId()).isEqualTo(correlation.value());
         assertThat(inLeg.correlationId()).isEqualTo(correlation.value());
         assertThat(outLeg.correlationId()).as("both legs share one correlation id").isEqualTo(inLeg.correlationId());
+
+        // Counterparty is the OTHER leg's player: the OUT leg points at the receiver, the IN leg at the sender.
+        assertThat(outLeg.counterpartyUuid()).as("OUT leg → receiver").isEqualTo(to.value());
+        assertThat(inLeg.counterpartyUuid()).as("IN leg → sender").isEqualTo(from.value());
+
+        EconomyHistoryEntry plainCredit = economy.findHistory(from, Optional.empty(),
+                Optional.of(EconomyEventType.CREDITED), null, 50).entries().get(0);
+        assertThat(plainCredit.counterpartyUuid()).as("non-transfer events have no counterparty").isNull();
     }
 
     private long credit(PlayerId p, CurrencyCode c, long amount) {

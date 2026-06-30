@@ -93,6 +93,7 @@ public final class EconomyMapper {
                 entry.transactionId().value(),
                 entry.source(),
                 entry.correlationId(),
+                entry.counterpartyUuid(),
                 entry.occurredAt().toEpochMilli());
     }
 }

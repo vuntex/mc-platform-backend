@@ -2,6 +2,7 @@ package com.mcplatform.protocol;
 
 import com.mcplatform.protocol.core.MessageProtocol;
 import com.mcplatform.protocol.economy.BalanceChangedEventCodec;
+import com.mcplatform.protocol.economy.EconomyAlertEventCodec;
 import com.mcplatform.protocol.permission.PermissionChangedEventCodec;
 import com.mcplatform.protocol.punishment.PunishmentChangedEventCodec;
 import com.mcplatform.protocol.report.ReportChangedEventCodec;
@@ -20,6 +21,7 @@ public final class PlatformProtocol {
     public static MessageProtocol create() {
         return new MessageProtocol(
                 BalanceChangedEventCodec.INSTANCE,
+                EconomyAlertEventCodec.INSTANCE,
                 PunishmentChangedEventCodec.INSTANCE,
                 ReportChangedEventCodec.INSTANCE,
                 PermissionChangedEventCodec.INSTANCE

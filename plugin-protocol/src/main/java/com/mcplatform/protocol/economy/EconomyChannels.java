@@ -12,5 +12,11 @@ public final class EconomyChannels {
      */
     public static final String BALANCE = Channels.of("economy", "balance");
 
+    /**
+     * Economy alert events (suspiciously high amounts) for admin broadcast + server logging. Payload is
+     * an {@link EconomyAlertEvent} (see {@link EconomyAlertEventCodec}).
+     */
+    public static final String ALERT = Channels.of("economy", "alert");
+
     private EconomyChannels() {}
 }

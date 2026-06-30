@@ -9,8 +9,10 @@ import java.util.UUID;
  *
  * <p>{@code amount} is always positive; the direction is encoded by {@code eventType}
  * (CREDITED|DEBITED|SET|TRANSFER_OUT|TRANSFER_IN). {@code correlationId} is set only for the two legs
- * of a transfer (shared between them) and is {@code null} otherwise. {@code sequenceNo} is the global
- * ordering and doubles as the keyset-pagination cursor.
+ * of a transfer (shared between them) and is {@code null} otherwise. {@code counterpartyUuid} is the
+ * OTHER party of a transfer (the receiver on a TRANSFER_OUT, the sender on a TRANSFER_IN), derived from
+ * the opposite leg; {@code null} for non-transfer events. {@code sequenceNo} is the global ordering and
+ * doubles as the keyset-pagination cursor.
  */
 public record EconomyEventEntry(
         long sequenceNo,
@@ -21,5 +23,6 @@ public record EconomyEventEntry(
         UUID transactionId,
         String source,
         UUID correlationId,
+        UUID counterpartyUuid,
         long timestampEpochMilli) {
 }

@@ -13,6 +13,8 @@ import java.util.UUID;
  * of {@code economy_event}; {@code amount} is always positive with direction encoded by {@code type}.
  * {@code sequenceNo} is the global ordering and the keyset-pagination cursor. {@code correlationId} is
  * the transfer correlation id read from event metadata — {@code null} for non-transfer events.
+ * {@code counterpartyUuid} is the other party of a transfer (the opposite leg's player) — {@code null}
+ * otherwise.
  */
 public record EconomyHistoryEntry(
         long sequenceNo,
@@ -23,6 +25,7 @@ public record EconomyHistoryEntry(
         TransactionId transactionId,
         String source,
         UUID correlationId,
+        UUID counterpartyUuid,
         Instant occurredAt) {
 
     public EconomyHistoryEntry {

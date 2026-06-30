@@ -38,6 +38,16 @@ mcplatform:
     refresh-cookie:
       name: mcweb_refresh
       path: /api/web-auth/session
+  economy:
+    # How often the money-in-circulation snapshot is recomputed (SUM of all balances).
+    circulation-refresh-millis: 60000
+    alert:
+      # A movement is flagged if it exceeds this % of the total circulation, OR (for outflows / the
+      # sender side of a transfer) this % of the sender's balance before the movement. Amounts below
+      # min-amount are ignored as noise.
+      circulation-percent: 5
+      sender-balance-percent: 80
+      min-amount: 1000
 
 ---
 # Local development profile. Connection data comes from environment variables

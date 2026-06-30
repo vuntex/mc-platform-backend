@@ -1,5 +1,6 @@
 package com.mcplatform.bootstrap.config;
 
+import com.mcplatform.application.economy.EconomyStatsService;
 import com.mcplatform.application.permission.GrantExpiryService;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -16,13 +17,24 @@ import org.springframework.scheduling.annotation.Scheduled;
 public class SchedulingConfig {
 
     private final GrantExpiryService expiry;
+    private final EconomyStatsService economyStats;
 
-    public SchedulingConfig(GrantExpiryService expiry) {
+    public SchedulingConfig(GrantExpiryService expiry, EconomyStatsService economyStats) {
         this.expiry = expiry;
+        this.economyStats = economyStats;
     }
 
     @Scheduled(fixedDelayString = "${mcplatform.permission.expiry-sweep-millis:30000}")
     public void sweepExpiredGrants() {
         expiry.sweep();
+    }
+
+    /**
+     * Refresh the cached money-in-circulation snapshot (used by the economy alert monitor + stats
+     * endpoint). Runs once at startup ({@code initialDelay 0}) then every 60 s by default.
+     */
+    @Scheduled(initialDelayString = "0", fixedDelayString = "${mcplatform.economy.circulation-refresh-millis:60000}")
+    public void refreshEconomyCirculation() {
+        economyStats.refresh();
     }
 }
