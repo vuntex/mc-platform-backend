@@ -1308,3 +1308,41 @@ Thema (Economy, Rollen & Permissions …) mit deutscher Beschreibung pro Gruppe 
   Duplikate, kein `*`, Gruppen alphabetisch sortiert + alle beschrieben. E2E in
   `WebPermissionVerticalSliceTest` (Admin sieht Gruppen/Keys/Beschreibungen, 403 ohne `permission.read`,
   401 ohne JWT). `./gradlew build` grün; Publish grün, POM weiterhin ohne `<dependencies>`.
+
+### Autoritäts-Grenzen für die Rollen-/Permission-Verwaltung erledigt (Privilege-Escalation-Schutz, spec 008)
+Zusätzliche, backend-autoritative Autoritäts-Schicht über der bestehenden Rollen-/Permission-Verwaltung.
+Achse ist das Rollen-`weight`: `authorityWeight(actor)` = höchstes Gewicht der **reachable** Rollen
+(aktive Grants + transitive Vererbung; bewusst NICHT `primaryRoleOf`, das `teamRank` vor `weight`
+priorisiert). „Top-Tier" = höchstes `weight` im System. **Keine Schema-/`plugin-protocol`-Änderung** —
+reines Verhalten (403/409 + gefilterte Reads).
+
+**Was steht**
+- **core-domain:** pure `RoleAuthority` (framework-frei, unit-testbar): `canManageWeight` (non-top
+  strikt `<`, Top-Tier `≤`), `canManageTarget`, `isWildcard`.
+- **application:** `PermissionAuthorityService` — `authorityWeight`/`topWeight`/`isTopTier` + Guards
+  (`requireCanManageRole/Weight/Target`, `requireCanDelegate` mit Wildcard→`*`) + ergebnisbasierter
+  Lockout (`requireNotLastTopTierOn{Revoke,Delete,WeightChange}`; no-op wenn kein Rang über der
+  Default-Stufe existiert) + Read-Helper (`visibleRoles`, `canViewRole`, `canViewTarget`). Neue
+  Exceptions `InsufficientAuthorityException` (403 `authority_ceiling`) / `LastTopTierException`
+  (409 `last_top_tier`).
+- **Regeln durchgesetzt:** (1) Rollen-Management/-Grant nur unterhalb der eigenen Stufe (Top-Tier `≤`,
+  nie über Max); (2) Permission-Delegation nur was man selbst hält, **jede Wildcard/`.*` nur mit `*`**;
+  (3) Ziel-Autoritäts-Ceiling (kein Umranken gleich-/höherrangiger Spieler); (4) Reads begrenzt
+  (Rollen-Liste weight-gefiltert, Einzel-Rollen-Read + Permissions-Tab höher-autorisierter Spieler →
+  403; Suche/Stammdaten/`/me` ungefiltert); (5) Lockout-Schutz des letzten Top-Tier → 409.
+  `*` verändert die Rang-Autorität NICHT (Weight-only, FR-002a).
+
+**Bewusste Eingriffe (dokumentationspflichtig, kein Muster-Leck):** Guards in `PermissionAdminService`
+(je nach `requirePermission` — die Engine wird intern aus den vorhandenen Deps gebaut, kein Konstruktor-/
+Wiring-Bruch; separater `PermissionAuthorityService`-Bean für den Read-Gate im `WebPermissionController`)
+und Read-Filter/Gate im `WebPermissionController` (+ 2 Handler-Mappings). `PermissionQueryService`/
+`PermissionResolver`/`RoleHierarchy` **unverändert** (nur konsumiert). Kein generischer Baustein geändert.
+
+**Tests grün:** Domain `RoleAuthorityTest`; Application `PermissionAuthorityServiceTest` (authorityWeight
+inkl. Vererbung/Fallback, top-tier, Lockout-Count, Read-Helper, Wildcard-Delegation) + erweiterte
+`PermissionAdminServiceTest` (Ceiling/Delegation/Ziel/Lockout je Methode) mit angepasstem Fake-Setup
+(top-tier-Actor); E2E `WebPermissionVerticalSliceTest` erweitert (Delegation von `*`/unheld → 403;
+höhere Rolle/Ziel verwalten/vergeben → 403; Rollen-Liste + Einzel-Rollen-Read + fremder Permissions-Tab
+gefiltert/403, Suche/`/me` ungefiltert; letzter Top-Tier self-demote → 409). Bestehende 002/005/006-
+Suiten unverändert grün (Regression). `./gradlew build` grün; **keine** `plugin-protocol`-/Schema-
+Änderung (kein Publish nötig), POM weiterhin ohne `<dependencies>`.

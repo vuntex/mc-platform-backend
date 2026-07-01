@@ -49,4 +49,17 @@ public final class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
         chain.doFilter(request, response);
     }
+
+    /**
+     * Also run on ASYNC dispatches. Async endpoints (e.g. the economy SSE {@code SseEmitter}) re-enter
+     * the filter chain on an async dispatch where the {@code AuthorizationFilter} runs again; the
+     * default OncePerRequestFilter behaviour SKIPS this filter on async, leaving an empty SecurityContext
+     * so authorization denies a still-valid request (the SSE response is already committed → the 403 can't
+     * even be written). This filter is stateless (re-reads the Bearer header), so running it on the async
+     * dispatch safely re-establishes identity and keeps the stream authorized.
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
 }

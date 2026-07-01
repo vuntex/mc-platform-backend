@@ -3,7 +3,9 @@ package com.mcplatform.api.rest;
 import com.mcplatform.api.rest.support.PermissionMapper;
 import com.mcplatform.api.rest.support.WebPermissionMapper;
 import com.mcplatform.application.economy.port.PlayerRepository;
+import com.mcplatform.application.permission.InsufficientAuthorityException;
 import com.mcplatform.application.permission.PermissionAdminService;
+import com.mcplatform.application.permission.PermissionAuthorityService;
 import com.mcplatform.application.permission.PermissionQueryService;
 import com.mcplatform.application.permission.PlayerPermissionsView;
 import com.mcplatform.application.permission.catalog.WebPermissionCatalogQuery;
@@ -56,16 +58,18 @@ public class WebPermissionController {
     private final PermissionAdminService admin;
     private final PermissionQueryService query;
     private final WebPermissionCatalogQuery catalog;
+    private final PermissionAuthorityService authority;
     private final PermissionResolver resolver;
     private final PlayerRepository playerRepository;
     private final Clock clock;
 
     public WebPermissionController(PermissionAdminService admin, PermissionQueryService query,
-            WebPermissionCatalogQuery catalog, PermissionResolver resolver,
-            PlayerRepository playerRepository, Clock clock) {
+            WebPermissionCatalogQuery catalog, PermissionAuthorityService authority,
+            PermissionResolver resolver, PlayerRepository playerRepository, Clock clock) {
         this.admin = admin;
         this.query = query;
         this.catalog = catalog;
+        this.authority = authority;
         this.resolver = resolver;
         this.playerRepository = playerRepository;
         this.clock = clock;
@@ -85,13 +89,18 @@ public class WebPermissionController {
     @GetMapping("/api/web/permission/roles")
     public RoleResponse[] listRoles(@AuthenticationPrincipal PlayerId actor) {
         requireRead(actor);
-        return query.allRoles().stream().map(PermissionMapper::role).toArray(RoleResponse[]::new);
+        // spec 008 FR-009: only roles within the actor's authority are listed.
+        return query.allRoles().stream()
+                .filter(d -> authority.canViewRole(actor.value(), d.role()))
+                .map(PermissionMapper::role).toArray(RoleResponse[]::new);
     }
 
     @GetMapping("/api/web/permission/roles/{id}")
     public RoleResponse getRole(@AuthenticationPrincipal PlayerId actor, @PathVariable long id) {
         requireRead(actor);
-        return PermissionMapper.role(query.roleDetail(RoleId.of(id)));
+        var detail = query.roleDetail(RoleId.of(id));
+        requireCanViewRole(actor, detail.role()); // spec 008 FR-009a: no bypass via direct id
+        return PermissionMapper.role(detail);
     }
 
     @PostMapping("/api/web/permission/roles")
@@ -118,7 +127,9 @@ public class WebPermissionController {
     @GetMapping("/api/web/permission/roles/{id}/permissions")
     public RoleResponse listRolePermissions(@AuthenticationPrincipal PlayerId actor, @PathVariable long id) {
         requireRead(actor);
-        return PermissionMapper.role(query.roleDetail(RoleId.of(id)));
+        var detail = query.roleDetail(RoleId.of(id));
+        requireCanViewRole(actor, detail.role()); // spec 008 FR-009a
+        return PermissionMapper.role(detail);
     }
 
     @PostMapping("/api/web/permission/roles/{id}/permissions")
@@ -140,6 +151,7 @@ public class WebPermissionController {
     @GetMapping("/api/web/permission/roles/{id}/inheritance")
     public long[] listInheritance(@AuthenticationPrincipal PlayerId actor, @PathVariable long id) {
         requireRead(actor);
+        requireCanViewRole(actor, query.roleDetail(RoleId.of(id)).role()); // spec 008 FR-009a
         return query.inheritanceParents(RoleId.of(id)).stream().mapToLong(Long::longValue).toArray();
     }
 
@@ -193,6 +205,11 @@ public class WebPermissionController {
     @GetMapping("/api/web/permission/players/{uuid}/effective")
     public PlayerPermissionsResponse effective(@AuthenticationPrincipal PlayerId actor, @PathVariable UUID uuid) {
         requireRead(actor);
+        // spec 008 FR-010: cannot inspect the permission/role detail of an equal-/higher-authority player.
+        if (!authority.canViewTarget(actor.value(), PlayerId.of(uuid))) {
+            throw new InsufficientAuthorityException(
+                    "actor " + actor.value() + " may not view permissions of a higher-authority player");
+        }
         return effectiveView(uuid);
     }
 
@@ -202,6 +219,14 @@ public class WebPermissionController {
     private void requireRead(PlayerId actor) {
         if (!resolver.hasPermission(actor.value(), PermissionAdminService.READ)) {
             throw new PermissionDeniedException(actor.value(), PermissionAdminService.READ);
+        }
+    }
+
+    /** Single-role read gate (spec 008 FR-009a): a role above the actor's authority is not viewable. */
+    private void requireCanViewRole(PlayerId actor, Role role) {
+        if (!authority.canViewRole(actor.value(), role)) {
+            throw new InsufficientAuthorityException(
+                    "actor " + actor.value() + " may not view role of weight " + role.weight());
         }
     }
 

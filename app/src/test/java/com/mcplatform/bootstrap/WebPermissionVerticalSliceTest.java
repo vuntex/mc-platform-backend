@@ -13,6 +13,7 @@ import com.mcplatform.domain.player.PlayerId;
 import com.mcplatform.protocol.permission.PermissionCatalogResponse;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleResponse;
+import com.mcplatform.protocol.permission.web.GrantPermissionWriteRequest;
 import com.mcplatform.protocol.permission.web.GrantRoleWriteRequest;
 import com.mcplatform.protocol.permission.web.InheritanceWriteRequest;
 import com.mcplatform.protocol.permission.web.RolePermissionWriteRequest;
@@ -587,6 +588,127 @@ class WebPermissionVerticalSliceTest {
                 HttpMethod.DELETE, auth(admin, null), String.class);
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(r.getBody()).contains("role_inherited");
+    }
+
+    // ====================== 008 — authority ceiling =======================
+
+    /** A short unique role name (the role-name column is length-limited, so no full UUIDs). */
+    private String uniq(String prefix) {
+        return prefix + UUID.randomUUID().toString().substring(0, 6);
+    }
+
+    private RoleWriteRequest roleW(String name, int weight) {
+        return new RoleWriteRequest(name, name, null, null, null, null, null, null, weight, false, true);
+    }
+
+    /** Creates a weighted role with the given permissions and grants it to a fresh actor (returns its uuid). */
+    private UUID managerActor(int weight, String... perms) {
+        UUID admin = staff("ADMIN");
+        RoleResponse mgr = rest.exchange("/api/web/permission/roles", HttpMethod.POST,
+                auth(admin, roleW(uniq("Mgr"), weight)), RoleResponse.class).getBody();
+        for (String p : perms) {
+            rest.exchange("/api/web/permission/roles/" + mgr.id() + "/permissions", HttpMethod.POST,
+                    auth(admin, new RolePermissionWriteRequest(p)), RoleResponse.class);
+        }
+        UUID actor = UUID.randomUUID();
+        rest.exchange("/api/web/permission/players/" + actor + "/roles", HttpMethod.POST,
+                auth(admin, new GrantRoleWriteRequest(mgr.id(), null, null)), PlayerPermissionsResponse.class);
+        return actor;
+    }
+
+    private long roleId(String name) {
+        return dsl.select(ROLE.ID).from(ROLE).where(ROLE.NAME.eq(name)).fetchOne(ROLE.ID);
+    }
+
+    @Test
+    void authorityBlocksDelegatingStarOrUnheldPermission() {
+        UUID admin = staff("ADMIN");
+        UUID mgr = managerActor(50, "permission.role.edit", "permission.grant.permission", "home.set");
+        RoleResponse low = rest.exchange("/api/web/permission/roles", HttpMethod.POST,
+                auth(admin, roleW(uniq("Low"), 10)), RoleResponse.class).getBody();
+
+        assertThat(rest.exchange("/api/web/permission/roles/" + low.id() + "/permissions", HttpMethod.POST,
+                auth(mgr, new RolePermissionWriteRequest("*")), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN); // wildcard without *
+        assertThat(rest.exchange("/api/web/permission/players/" + UUID.randomUUID() + "/permissions", HttpMethod.POST,
+                auth(mgr, new GrantPermissionWriteRequest("*", null, null)), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(rest.exchange("/api/web/permission/roles/" + low.id() + "/permissions", HttpMethod.POST,
+                auth(mgr, new RolePermissionWriteRequest("home.set")), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.OK); // holds it → allowed
+    }
+
+    @Test
+    void authorityBlocksManagingOrGrantingHigherRoleAndTarget() {
+        UUID mgr = managerActor(50, "permission.role.create", "permission.role.edit", "permission.grant.role");
+        long adminRoleId = roleId("ADMIN");
+        UUID adminPlayer = staff("ADMIN"); // authority 100 ≥ 50
+
+        assertThat(rest.exchange("/api/web/permission/roles/" + adminRoleId + "/permissions", HttpMethod.POST,
+                auth(mgr, new RolePermissionWriteRequest("home.set")), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN); // editing a higher role
+        assertThat(rest.exchange("/api/web/permission/players/" + UUID.randomUUID() + "/roles", HttpMethod.POST,
+                auth(mgr, new GrantRoleWriteRequest(adminRoleId, null, null)), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN); // granting a higher role
+        assertThat(rest.exchange("/api/web/permission/roles", HttpMethod.POST,
+                auth(mgr, roleW(uniq("Peer"), 50)), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN); // creating at own weight (strict <)
+        // manage a higher-authority target (an ADMIN) → 403
+        RoleResponse low = rest.exchange("/api/web/permission/roles", HttpMethod.POST,
+                auth(staff("ADMIN"), roleW(uniq("L"), 5)), RoleResponse.class).getBody();
+        assertThat(rest.exchange("/api/web/permission/players/" + adminPlayer + "/roles", HttpMethod.POST,
+                auth(mgr, new GrantRoleWriteRequest(low.id(), null, null)), String.class).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void readsAreBoundedByAuthorityButSearchAndMeAreNot() {
+        UUID mgr = managerActor(50, "permission.read");
+        long adminRoleId = roleId("ADMIN");
+        UUID adminPlayer = staff("ADMIN");
+
+        RoleResponse[] visible = rest.exchange("/api/web/permission/roles", HttpMethod.GET,
+                auth(mgr, null), RoleResponse[].class).getBody();
+        assertThat(visible).extracting(RoleResponse::name).doesNotContain("ADMIN"); // FR-009
+
+        assertThat(rest.exchange("/api/web/permission/roles/" + adminRoleId, HttpMethod.GET,
+                auth(mgr, null), String.class).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN); // FR-009a
+        assertThat(rest.exchange("/api/web/permission/players/" + adminPlayer + "/effective", HttpMethod.GET,
+                auth(mgr, null), String.class).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN); // FR-010
+
+        UUID named = playerNamed("HighGuyAdmin");
+        rest.exchange("/api/web/permission/players/" + named + "/roles", HttpMethod.POST,
+                auth(staff("ADMIN"), new GrantRoleWriteRequest(adminRoleId, null, null)), PlayerPermissionsResponse.class);
+        PlayerSummary[] hits = rest.exchange("/api/web/players/search?name=HighGuy", HttpMethod.GET,
+                auth(mgr, null), PlayerSummary[].class).getBody();
+        assertThat(hits).extracting(PlayerSummary::name).contains("HighGuyAdmin"); // search unfiltered (FR-010a)
+
+        MeResponse me = rest.exchange("/api/web/me", HttpMethod.GET, auth(mgr, null), MeResponse.class).getBody();
+        assertThat(me.uuid()).isEqualTo(mgr); // /me unbounded (FR-011)
+    }
+
+    @Test
+    void ownPermissionsTabIsAlwaysVisible() {
+        UUID mgr = managerActor(50, "permission.read"); // non-top, may read
+        ResponseEntity<PlayerPermissionsResponse> r = rest.exchange(
+                "/api/web/permission/players/" + mgr + "/effective", HttpMethod.GET,
+                auth(mgr, null), PlayerPermissionsResponse.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.OK); // must see one's OWN permissions
+        assertThat(r.getBody().player()).isEqualTo(mgr);
+    }
+
+    @Test
+    void lastTopTierHolderCannotSelfDemote() {
+        long adminRoleId = roleId("ADMIN");
+        dsl.update(PLAYER_ROLE_GRANT).set(PLAYER_ROLE_GRANT.ACTIVE, false)
+                .where(PLAYER_ROLE_GRANT.ROLE_ID.eq(adminRoleId)).execute(); // clear the top tier
+        UUID owner = staff("ADMIN"); // now the sole active ADMIN
+
+        ResponseEntity<String> r = rest.exchange(
+                "/api/web/permission/players/" + owner + "/roles/" + adminRoleId, HttpMethod.DELETE,
+                auth(owner, null), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(r.getBody()).contains("last_top_tier");
     }
 
     @Test

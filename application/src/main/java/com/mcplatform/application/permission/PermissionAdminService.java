@@ -56,6 +56,7 @@ public final class PermissionAdminService {
     private final PermissionChangePublisher publisher;
     private final PermissionResolver permissions;
     private final Clock clock;
+    private final PermissionAuthorityService authority;
 
     public PermissionAdminService(RoleRepository roles, PlayerGrantRepository grants,
             RoleInheritanceRepository inheritance, GrantAuditPort audit, RoleAuditPort roleAudit,
@@ -68,6 +69,9 @@ public final class PermissionAdminService {
         this.publisher = publisher;
         this.permissions = permissions;
         this.clock = clock;
+        // Authority-ceiling guards (spec 008): built from the existing deps — no new constructor param,
+        // so wiring/tests stay unchanged. The web read layer uses a separate bean of the same class.
+        this.authority = new PermissionAuthorityService(roles, grants, inheritance, permissions, clock);
     }
 
     // --- Roles (master data) ----------------------------------------------
@@ -75,6 +79,7 @@ public final class PermissionAdminService {
     /** Create a role. {@code draft.id()} is ignored (DB-assigned). Requires {@link #ROLE_CREATE}. */
     public Role createRole(Role draft, java.util.UUID actor) {
         requirePermission(actor, ROLE_CREATE);
+        authority.requireCanManageWeight(actor, draft.weight()); // spec 008: no role above own authority
         roles.findByNameIgnoreCase(draft.name()).ifPresent(r -> {
             throw new RoleNameConflictException(draft.name());
         });
@@ -87,6 +92,9 @@ public final class PermissionAdminService {
     public Role updateRole(Role role, java.util.UUID actor) {
         requirePermission(actor, ROLE_EDIT);
         Role existing = roles.find(role.id()).orElseThrow(() -> new RoleNotFoundException(role.id()));
+        authority.requireCanManageRole(actor, existing);          // spec 008: only below own authority
+        authority.requireCanManageWeight(actor, role.weight());   // and never lift above it
+        authority.requireNotLastTopTierOnWeightChange(existing, role.weight());
         if (existing.isDefault() && !role.active()) {
             throw new DefaultRoleProtectedException("the default role cannot be deactivated");
         }
@@ -126,9 +134,11 @@ public final class PermissionAdminService {
     public void deleteRole(RoleId id, java.util.UUID actor) {
         requirePermission(actor, ROLE_DELETE);
         Role role = roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
+        authority.requireCanManageRole(actor, role); // spec 008
         if (role.isDefault()) {
             throw new DefaultRoleProtectedException("the default role cannot be deleted");
         }
+        authority.requireNotLastTopTierOnDelete(role); // spec 008: keep ≥1 top-tier
         List<RoleId> dependents = inheritance.directChildren(id);
         if (!dependents.isEmpty()) {
             // FR-015: a role still inherited by others cannot be deleted — remove the edge there first.
@@ -152,6 +162,8 @@ public final class PermissionAdminService {
         requirePermission(actor, ROLE_EDIT);
         com.mcplatform.domain.permission.PermissionString.validate(permission); // FR-014 → 422
         Role role = roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
+        authority.requireCanManageRole(actor, role);          // spec 008: role below own authority
+        authority.requireCanDelegate(actor, permission);      // spec 008: only delegate what you hold
         roles.addPermission(id, permission, actor);
         roleAudit.record(RoleAuditPort.Action.ROLE_PERMISSION_ADD, id, role.name(), permission, actor,
                 clock.instant());
@@ -162,6 +174,7 @@ public final class PermissionAdminService {
     public void removeRolePermission(RoleId id, String permission, java.util.UUID actor) {
         requirePermission(actor, ROLE_EDIT);
         Role role = roles.find(id).orElseThrow(() -> new RoleNotFoundException(id));
+        authority.requireCanManageRole(actor, role); // spec 008
         roles.removePermission(id, permission);
         roleAudit.record(RoleAuditPort.Action.ROLE_PERMISSION_REMOVE, id, role.name(), permission, actor,
                 clock.instant());
@@ -179,7 +192,9 @@ public final class PermissionAdminService {
     public void addInheritance(RoleId child, RoleId parent, java.util.UUID actor) {
         requirePermission(actor, ROLE_EDIT_INHERIT);
         Role c = roles.find(child).orElseThrow(() -> new RoleNotFoundException(child));
-        roles.find(parent).orElseThrow(() -> new RoleNotFoundException(parent));
+        Role p = roles.find(parent).orElseThrow(() -> new RoleNotFoundException(parent));
+        authority.requireCanManageRole(actor, c); // spec 008: both ends within own authority
+        authority.requireCanManageRole(actor, p);
         if (c.isDefault()) {
             throw new DefaultRoleProtectedException(
                     "the default role is a leaf and cannot inherit other roles");
@@ -197,6 +212,7 @@ public final class PermissionAdminService {
     public void removeInheritance(RoleId child, RoleId parent, java.util.UUID actor) {
         requirePermission(actor, ROLE_EDIT_INHERIT);
         Role c = roles.find(child).orElseThrow(() -> new RoleNotFoundException(child));
+        authority.requireCanManageRole(actor, c); // spec 008
         if (inheritance.remove(child, parent)) {
             roleAudit.record(RoleAuditPort.Action.ROLE_INHERITANCE_REMOVE, child, c.name(), null, actor,
                     clock.instant());
@@ -217,6 +233,8 @@ public final class PermissionAdminService {
             throw new DefaultRoleProtectedException(
                     "the default role cannot be granted; it is the automatic fallback when a player has no other role");
         }
+        authority.requireCanManageRole(actor, role);      // spec 008: role below own authority
+        authority.requireCanManageTarget(actor, player);  // and target not at/above own authority
         Instant now = clock.instant();
         requireFutureExpiry(expiresAt, now);
         grants.upsertRoleGrant(new RoleGrant(player, roleId, actor, now, expiresAt, reason, true));
@@ -232,6 +250,13 @@ public final class PermissionAdminService {
         roles.find(roleId).filter(Role::isDefault).ifPresent(r -> {
             throw new DefaultRoleProtectedException("the default role cannot be revoked; it is the automatic fallback");
         });
+        // spec 008: a known role must be within the actor's authority (target too), and revoking it must
+        // not remove the last top-tier holder. Unknown roles stay lenient (no-op below).
+        roles.find(roleId).ifPresent(role -> {
+            authority.requireCanManageRole(actor, role);
+            authority.requireCanManageTarget(actor, player);
+            authority.requireNotLastTopTierOnRevoke(player, role);
+        });
         Instant now = clock.instant();
         if (grants.revokeRoleGrant(player, roleId)) {
             audit.record(GrantAuditPort.Entry.role(GrantAuditPort.Action.REVOKE, player, roleId, actor, reason, now));
@@ -244,6 +269,8 @@ public final class PermissionAdminService {
             java.util.UUID actor) {
         requirePermission(actor, GRANT_PERMISSION);
         com.mcplatform.domain.permission.PermissionString.validate(permission); // FR-014 → 422
+        authority.requireCanManageTarget(actor, player);   // spec 008: target below own authority
+        authority.requireCanDelegate(actor, permission);   // and only delegate what you hold (wildcard→*)
         Instant now = clock.instant();
         requireFutureExpiry(expiresAt, now);
         grants.upsertPermissionGrant(new PermissionGrant(player, permission, actor, now, expiresAt, reason, true));
@@ -254,6 +281,7 @@ public final class PermissionAdminService {
     /** Revoke a player's direct permission grant. Requires {@link #GRANT_PERMISSION}. */
     public void revokePermission(PlayerId player, String permission, String reason, java.util.UUID actor) {
         requirePermission(actor, GRANT_PERMISSION);
+        authority.requireCanManageTarget(actor, player); // spec 008
         Instant now = clock.instant();
         if (grants.revokePermissionGrant(player, permission)) {
             audit.record(GrantAuditPort.Entry.permission(GrantAuditPort.Action.REVOKE, player, permission, actor, reason, now));

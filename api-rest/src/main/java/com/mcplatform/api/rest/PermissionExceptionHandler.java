@@ -1,5 +1,7 @@
 package com.mcplatform.api.rest;
 
+import com.mcplatform.application.permission.InsufficientAuthorityException;
+import com.mcplatform.application.permission.LastTopTierException;
 import com.mcplatform.application.permission.port.DefaultRoleProtectedException;
 import com.mcplatform.application.permission.port.RoleInheritanceCycleException;
 import com.mcplatform.application.permission.port.RoleInheritedException;
@@ -55,5 +57,17 @@ public class PermissionExceptionHandler {
     @ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
     public Map<String, String> invalid(RuntimeException e) {
         return Map.of("error", "permission_invalid", "message", e.getMessage());
+    }
+
+    @ExceptionHandler(InsufficientAuthorityException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public Map<String, String> insufficientAuthority(InsufficientAuthorityException e) {
+        return Map.of("error", "authority_ceiling", "message", e.getMessage());
+    }
+
+    @ExceptionHandler(LastTopTierException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public Map<String, String> lastTopTier(LastTopTierException e) {
+        return Map.of("error", "last_top_tier", "message", e.getMessage());
     }
 }

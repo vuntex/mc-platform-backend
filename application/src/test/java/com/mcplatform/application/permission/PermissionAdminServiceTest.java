@@ -17,6 +17,7 @@ import com.mcplatform.application.permission.port.RoleNameConflictException;
 import com.mcplatform.application.security.PermissionDeniedException;
 import com.mcplatform.domain.permission.PermissionChangeType;
 import com.mcplatform.domain.permission.Role;
+import com.mcplatform.domain.permission.RoleGrant;
 import com.mcplatform.domain.permission.RoleId;
 import com.mcplatform.domain.player.PlayerId;
 import java.time.Clock;
@@ -167,7 +168,7 @@ class PermissionAdminServiceTest {
     void roleMasterAndPermissionChangesAreAudited() {
         Role supporter = svc.createRole(draft("Supporter"), admin);
         svc.updateRole(new Role(supporter.id(), "Supporter", "Supporter+", null, null, null, null, null, null,
-                5, false, true, false), admin);
+                0, false, true, false), admin);
         svc.addRolePermission(supporter.id(), "home.set", admin);
         svc.removeRolePermission(supporter.id(), "home.set", admin);
         svc.deleteRole(supporter.id(), admin);
@@ -311,5 +312,96 @@ class PermissionAdminServiceTest {
         assertThat(publisher.events).extracting(java.util.Map.Entry::getKey)
                 .containsExactly(premiumHolder.value());
         assertThat(publisher.countOfType(PermissionChangeType.ROLE_CONFIG_CHANGED)).isEqualTo(1);
+    }
+
+    // --- authority ceiling (008) ------------------------------------------
+
+    private Role seedRole(long id, String name, int weight) {
+        return roles.seed(new Role(RoleId.of(id), name, name, null, null, null, null, null, null,
+                weight, false, true, false));
+    }
+
+    private void holdRole(UUID who, RoleId role) {
+        grants.upsertRoleGrant(new RoleGrant(PlayerId.of(who), role, who, clock.instant(), null, null, true));
+    }
+
+    @Test
+    void nonTopCannotManageOrGrantHigherOrEqualRole() {
+        Role mod = seedRole(10, "MOD", 50);
+        Role adminRole = seedRole(11, "ADMIN", 100);
+        UUID modActor = UUID.randomUUID();
+        holdRole(modActor, mod.id());
+        resolver.grant(modActor, PermissionAdminService.ROLE_CREATE, PermissionAdminService.ROLE_EDIT,
+                PermissionAdminService.GRANT_ROLE);
+
+        assertThatThrownBy(() -> svc.addRolePermission(adminRole.id(), "home.set", modActor))
+                .isInstanceOf(InsufficientAuthorityException.class);
+        assertThatThrownBy(() -> svc.grantRole(PlayerId.of(UUID.randomUUID()), adminRole.id(), null, null, modActor))
+                .isInstanceOf(InsufficientAuthorityException.class);
+        assertThatThrownBy(() -> svc.createRole(new Role(RoleId.of(0), "Peer", "Peer", null, null, null, null,
+                null, null, 50, false, true, false), modActor)) // == own weight → strict < rejects
+                .isInstanceOf(InsufficientAuthorityException.class);
+    }
+
+    @Test
+    void nonTopCannotManageHigherAuthorityTarget() {
+        Role mod = seedRole(10, "MOD", 50);
+        Role adminRole = seedRole(11, "ADMIN", 100);
+        Role helper = seedRole(12, "HELPER", 10);
+        UUID modActor = UUID.randomUUID();
+        holdRole(modActor, mod.id());
+        resolver.grant(modActor, PermissionAdminService.GRANT_ROLE);
+        UUID adminPlayer = UUID.randomUUID();
+        holdRole(adminPlayer, adminRole.id());
+
+        assertThatThrownBy(() -> svc.grantRole(PlayerId.of(adminPlayer), helper.id(), null, null, modActor))
+                .isInstanceOf(InsufficientAuthorityException.class);
+    }
+
+    @Test
+    void delegationRequiresHoldingThePermissionAndStarForWildcard() {
+        Role low = seedRole(10, "LOW", 10);
+        seedRole(11, "TOP", 100); // makes modActor non-top
+        Role mod = seedRole(12, "MOD", 50);
+        UUID modActor = UUID.randomUUID();
+        holdRole(modActor, mod.id());
+        resolver.grant(modActor, PermissionAdminService.ROLE_EDIT, PermissionAdminService.GRANT_PERMISSION, "home.set");
+
+        svc.addRolePermission(low.id(), "home.set", modActor); // holds it → ok
+        assertThat(roles.permissionsOf(low.id())).contains("home.set");
+        assertThatThrownBy(() -> svc.addRolePermission(low.id(), "*", modActor)) // wildcard w/o *
+                .isInstanceOf(InsufficientAuthorityException.class);
+        assertThatThrownBy(() -> svc.grantPermission(PlayerId.of(UUID.randomUUID()), "server.stop", null, null, modActor))
+                .isInstanceOf(InsufficientAuthorityException.class); // unheld concrete
+        assertThatThrownBy(() -> svc.grantPermission(PlayerId.of(UUID.randomUUID()), "*", null, null, modActor))
+                .isInstanceOf(InsufficientAuthorityException.class); // wildcard w/o *
+    }
+
+    @Test
+    void lastTopTierHolderCannotBeRevokedButANonLastCan() {
+        Role adminRole = seedRole(10, "ADMIN", 100);
+        UUID owner = UUID.randomUUID();
+        holdRole(owner, adminRole.id());
+        resolver.grant(owner, PermissionAdminService.GRANT_ROLE);
+
+        assertThatThrownBy(() -> svc.revokeRole(PlayerId.of(owner), adminRole.id(), "step down", owner))
+                .isInstanceOf(LastTopTierException.class); // self-demote of the last top-tier
+
+        UUID owner2 = UUID.randomUUID();
+        holdRole(owner2, adminRole.id());
+        resolver.grant(owner2, PermissionAdminService.GRANT_ROLE);
+        svc.revokeRole(PlayerId.of(owner), adminRole.id(), "ok now", owner2);
+        assertThat(grants.activeRoleGrants(PlayerId.of(owner), clock.instant())).isEmpty();
+    }
+
+    @Test
+    void topTierMayManageItsOwnLevel() {
+        Role adminRole = seedRole(10, "ADMIN", 100);
+        UUID owner = UUID.randomUUID();
+        holdRole(owner, adminRole.id());
+        resolver.grant(owner, PermissionAdminService.ROLE_EDIT, "*"); // top-tier owner holds *
+
+        svc.addRolePermission(adminRole.id(), "server.manage", owner); // ≤ own level → allowed
+        assertThat(roles.permissionsOf(adminRole.id())).contains("server.manage");
     }
 }

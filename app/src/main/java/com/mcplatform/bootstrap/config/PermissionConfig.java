@@ -4,6 +4,7 @@ import com.mcplatform.application.economy.EconomyPermissionCatalog;
 import com.mcplatform.application.permission.GrantExpiryService;
 import com.mcplatform.application.permission.PermissionAdminCatalog;
 import com.mcplatform.application.permission.PermissionAdminService;
+import com.mcplatform.application.permission.PermissionAuthorityService;
 import com.mcplatform.application.permission.PermissionQueryService;
 import com.mcplatform.application.permission.catalog.PermissionCatalogContributor;
 import com.mcplatform.application.permission.catalog.WebPermissionCatalogQuery;
@@ -49,6 +50,14 @@ public class PermissionConfig {
     PermissionQueryService permissionQueryService(RoleRepository roles, PlayerGrantRepository grants,
             RoleInheritanceRepository inheritance, Clock clock) {
         return new PermissionQueryService(roles, grants, inheritance, clock);
+    }
+
+    // Authority-ceiling engine (spec 008) for the web read layer (WebPermissionController). The
+    // PermissionAdminService builds its own instance from the same deps for the write guards.
+    @Bean
+    PermissionAuthorityService permissionAuthorityService(RoleRepository roles, PlayerGrantRepository grants,
+            RoleInheritanceRepository inheritance, PermissionResolver resolver, Clock clock) {
+        return new PermissionAuthorityService(roles, grants, inheritance, resolver, clock);
     }
 
     // Web-permission catalog: each feature contributes its own group (no central god-list). Adding a
