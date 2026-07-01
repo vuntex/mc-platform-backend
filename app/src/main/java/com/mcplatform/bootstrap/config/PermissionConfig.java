@@ -1,8 +1,12 @@
 package com.mcplatform.bootstrap.config;
 
+import com.mcplatform.application.economy.EconomyPermissionCatalog;
 import com.mcplatform.application.permission.GrantExpiryService;
+import com.mcplatform.application.permission.PermissionAdminCatalog;
 import com.mcplatform.application.permission.PermissionAdminService;
 import com.mcplatform.application.permission.PermissionQueryService;
+import com.mcplatform.application.permission.catalog.PermissionCatalogContributor;
+import com.mcplatform.application.permission.catalog.WebPermissionCatalogQuery;
 import com.mcplatform.application.permission.port.GrantAuditPort;
 import com.mcplatform.application.permission.port.PermissionChangePublisher;
 import com.mcplatform.application.permission.port.RoleAuditPort;
@@ -13,6 +17,7 @@ import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.bootstrap.adapter.RedisPermissionEventPublisher;
 import com.mcplatform.cache.RedisCacheAdapter;
 import java.time.Clock;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -44,6 +49,23 @@ public class PermissionConfig {
     PermissionQueryService permissionQueryService(RoleRepository roles, PlayerGrantRepository grants,
             RoleInheritanceRepository inheritance, Clock clock) {
         return new PermissionQueryService(roles, grants, inheritance, clock);
+    }
+
+    // Web-permission catalog: each feature contributes its own group (no central god-list). Adding a
+    // feature's web permissions = add its contributor bean here. ("ein Feature = ein Anstecken")
+    @Bean
+    PermissionCatalogContributor permissionAdminCatalog() {
+        return new PermissionAdminCatalog();
+    }
+
+    @Bean
+    PermissionCatalogContributor economyPermissionCatalog() {
+        return new EconomyPermissionCatalog();
+    }
+
+    @Bean
+    WebPermissionCatalogQuery webPermissionCatalogQuery(List<PermissionCatalogContributor> contributors) {
+        return new WebPermissionCatalogQuery(contributors);
     }
 
     @Bean

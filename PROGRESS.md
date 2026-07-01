@@ -1286,3 +1286,25 @@ Zeitreihe „Umlauf über Zeit", CSV-Export, `playerName` im Wire-`BalanceChange
   Frame; `?player=`-Filter liefert nur den passenden Spieler).
 - `./gradlew build` grün (Gesamt); `:plugin-protocol:publishToMavenLocal` grün, POM weiterhin **ohne**
   `<dependencies>`, `PlatformProtocol.create()` unverändert.
+
+### Web-Permission-Katalog erledigt (read-only Übersicht für den Rollen-Editor)
+Kleiner read-only Endpunkt, der alle **im Webinterface durchgesetzten** Permissions gruppiert nach
+Thema (Economy, Rollen & Permissions …) mit deutscher Beschreibung pro Gruppe und Permission liefert
+— damit man beim Rollen-Bearbeiten sieht, welche Web-Permissions existieren und was sie tun.
+- **Endpoint:** `GET /api/web/permission/catalog` → `PermissionCatalogResponse { groups: [ { key,
+  displayName, description, permissions: [ { key, description } ] } ] }`. Gegated über das bestehende
+  `permission.read` (gleiches Read-Gate wie die übrigen `/api/web/permission/**`-Reads); 403/401 analog.
+- **Code-definiert, pro-Feature beigesteuert (kein Drift, „ein Feature = ein Anstecken"):** Interface
+  `PermissionCatalogContributor`; jedes Feature liefert seine Gruppe und referenziert dabei **seine
+  eigenen** Permission-Konstanten (`PermissionAdminCatalog` → `PermissionAdminService.*`,
+  `EconomyPermissionCatalog` → `EconomyPermissions.READ`). `WebPermissionCatalogQuery` aggregiert alle
+  Contributor (per Bean-Liste in `PermissionConfig` verdrahtet) und sortiert stabil nach Anzeigename.
+  Ein neues Feature mit Web-Permissions = ein neuer Contributor-Bean in der Composition Root.
+- **Bewusst:** nur Web-Permissions (keine Plugin-Permissions), Deutsch, **kein** `*`-Eintrag. DTOs
+  JDK-only in `protocol.permission` (`PermissionCatalogResponse`/`PermissionGroupResponse`/
+  `PermissionInfoResponse`).
+- **Drift-Schutz (Test):** `WebPermissionCatalogQueryTest` prüft, dass die Katalog-Keys **exakt** der
+  Menge der gegateten Web-Permission-Konstanten entsprechen (kein verwaister/fehlender Eintrag), keine
+  Duplikate, kein `*`, Gruppen alphabetisch sortiert + alle beschrieben. E2E in
+  `WebPermissionVerticalSliceTest` (Admin sieht Gruppen/Keys/Beschreibungen, 403 ohne `permission.read`,
+  401 ohne JWT). `./gradlew build` grün; Publish grün, POM weiterhin ohne `<dependencies>`.

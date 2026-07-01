@@ -6,12 +6,14 @@ import com.mcplatform.application.economy.port.PlayerRepository;
 import com.mcplatform.application.permission.PermissionAdminService;
 import com.mcplatform.application.permission.PermissionQueryService;
 import com.mcplatform.application.permission.PlayerPermissionsView;
+import com.mcplatform.application.permission.catalog.WebPermissionCatalogQuery;
 import com.mcplatform.application.security.PermissionDeniedException;
 import com.mcplatform.application.security.PermissionResolver;
 import com.mcplatform.domain.permission.Role;
 import com.mcplatform.domain.permission.RoleId;
 import com.mcplatform.domain.player.PlayerId;
 import com.mcplatform.protocol.permission.ActiveGrant;
+import com.mcplatform.protocol.permission.PermissionCatalogResponse;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleResponse;
 import com.mcplatform.protocol.permission.web.GrantPermissionWriteRequest;
@@ -53,17 +55,29 @@ public class WebPermissionController {
 
     private final PermissionAdminService admin;
     private final PermissionQueryService query;
+    private final WebPermissionCatalogQuery catalog;
     private final PermissionResolver resolver;
     private final PlayerRepository playerRepository;
     private final Clock clock;
 
     public WebPermissionController(PermissionAdminService admin, PermissionQueryService query,
-            PermissionResolver resolver, PlayerRepository playerRepository, Clock clock) {
+            WebPermissionCatalogQuery catalog, PermissionResolver resolver,
+            PlayerRepository playerRepository, Clock clock) {
         this.admin = admin;
         this.query = query;
+        this.catalog = catalog;
         this.resolver = resolver;
         this.playerRepository = playerRepository;
         this.clock = clock;
+    }
+
+    // --- catalog ----------------------------------------------------------
+
+    /** Discoverable overview of all web-interface permissions, grouped by theme, for the role editor. */
+    @GetMapping("/api/web/permission/catalog")
+    public PermissionCatalogResponse catalog(@AuthenticationPrincipal PlayerId actor) {
+        requireRead(actor);
+        return PermissionMapper.catalog(catalog.groups());
     }
 
     // --- roles ------------------------------------------------------------

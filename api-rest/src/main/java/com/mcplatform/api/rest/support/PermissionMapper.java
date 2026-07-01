@@ -2,10 +2,14 @@ package com.mcplatform.api.rest.support;
 
 import com.mcplatform.application.permission.PermissionQueryService.RoleDetail;
 import com.mcplatform.application.permission.PlayerPermissionsView;
+import com.mcplatform.application.permission.catalog.PermissionCatalogGroup;
 import com.mcplatform.domain.permission.Role;
 import com.mcplatform.domain.permission.RoleId;
 import com.mcplatform.protocol.permission.ActiveGrant;
 import com.mcplatform.protocol.permission.EffectivePermissionEntry;
+import com.mcplatform.protocol.permission.PermissionCatalogResponse;
+import com.mcplatform.protocol.permission.PermissionGroupResponse;
+import com.mcplatform.protocol.permission.PermissionInfoResponse;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleDisplay;
 import com.mcplatform.protocol.permission.RoleRequest;
@@ -60,6 +64,17 @@ public final class PermissionMapper {
                 d.tabListColor(), d.tabListIcon(), d.displayIcon());
         return new PlayerPermissionsResponse(v.player(), roles, perms,
                 List.copyOf(v.effectivePermissions()), sources, display);
+    }
+
+    /** The grouped web-permission catalog → wire DTO (spec: permission overview for the role editor). */
+    public static PermissionCatalogResponse catalog(List<PermissionCatalogGroup> groups) {
+        List<PermissionGroupResponse> mapped = groups.stream()
+                .map(g -> new PermissionGroupResponse(g.key(), g.displayName(), g.description(),
+                        g.permissions().stream()
+                                .map(p -> new PermissionInfoResponse(p.key(), p.description()))
+                                .toList()))
+                .toList();
+        return new PermissionCatalogResponse(mapped);
     }
 
     private static ActiveGrant grant(PlayerPermissionsView.GrantSummary g, Map<UUID, String> issuerNames) {

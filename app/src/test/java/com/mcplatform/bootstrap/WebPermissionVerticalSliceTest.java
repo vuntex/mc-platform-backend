@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mcplatform.bootstrap.adapter.JwtTokenService;
 import com.mcplatform.cache.RedisCacheAdapter;
 import com.mcplatform.domain.player.PlayerId;
+import com.mcplatform.protocol.permission.PermissionCatalogResponse;
 import com.mcplatform.protocol.permission.PlayerPermissionsResponse;
 import com.mcplatform.protocol.permission.RoleResponse;
 import com.mcplatform.protocol.permission.web.GrantRoleWriteRequest;
@@ -198,6 +199,37 @@ class WebPermissionVerticalSliceTest {
     @Test
     void meRequiresJwt() {
         assertThat(rest.getForEntity("/api/web/me", String.class).getStatusCode())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    // ====================== permission catalog ============================
+
+    @Test
+    void catalogListsWebPermissionsGroupedByThemeForAdmin() {
+        UUID admin = staff("ADMIN");
+        PermissionCatalogResponse catalog = rest.exchange("/api/web/permission/catalog", HttpMethod.GET,
+                auth(admin, null), PermissionCatalogResponse.class).getBody();
+
+        assertThat(catalog.groups()).extracting(g -> g.displayName())
+                .containsExactly("Economy", "Rollen & Permissions");
+        assertThat(catalog.groups()).allSatisfy(g -> assertThat(g.description()).isNotBlank());
+        assertThat(catalog.groups()).flatExtracting(g -> g.permissions()).extracting(p -> p.key())
+                .contains("permission.economy.read", "permission.role.create", "permission.read");
+        assertThat(catalog.groups()).flatExtracting(g -> g.permissions())
+                .allSatisfy(p -> assertThat(p.description()).isNotBlank());
+    }
+
+    @Test
+    void catalogForbiddenWithoutReadPermission() {
+        UUID mod = staff("MODERATOR"); // no permission.read
+        ResponseEntity<String> r = rest.exchange("/api/web/permission/catalog", HttpMethod.GET,
+                auth(mod, null), String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void catalogRequiresJwt() {
+        assertThat(rest.getForEntity("/api/web/permission/catalog", String.class).getStatusCode())
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
