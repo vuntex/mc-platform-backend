@@ -103,9 +103,13 @@ GET    /api/web/permission/players/{uuid}/effective              → PlayerPermi
 ### Spieler-Suche (ungefiltert)
 ```
 GET /api/web/players/search?name={prefix}   → PlayerSummary[]
+GET /api/web/players/{uuid}                  → PlayerSummary   (braucht permission.read;
+                                                                404 player_not_found wenn UUID unbekannt)
 ```
 - Case-insensitive Präfix-Suche, **nicht** autoritäts-gefiltert (auch höhere Ränge auffindbar).
   Braucht `permission.read`.
+- UUID → Name: autoritative Auflösung aus derselben gecachten Namensquelle wie die Suche, **nicht**
+  autoritäts-gefiltert. Braucht `permission.read`. Unbekannte UUID → 404 `player_not_found`.
 
 ---
 
@@ -124,6 +128,7 @@ JSON `{ "error": "<code>", "message": "..." }` (außer 401 ohne Body).
 | Vererbungs-Zyklus | 409 | `role_inheritance_cycle` |
 | Rolle wird noch geerbt (Delete) | 409 | `role_inherited` |
 | Rolle nicht gefunden | 404 | `role_not_found` |
+| Spieler (UUID) nicht gefunden | 404 | `player_not_found` |
 | ungültige Rolle/Permission | 422 | `permission_invalid` |
 
 **UI-Mapping-Empfehlung:** `authority_ceiling` → „Dafür reicht dein Rang nicht." · `last_top_tier` →

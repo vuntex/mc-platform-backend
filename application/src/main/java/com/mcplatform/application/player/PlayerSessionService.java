@@ -4,6 +4,7 @@ import com.mcplatform.application.economy.EconomyService;
 import com.mcplatform.application.economy.port.CurrencyDefault;
 import com.mcplatform.application.economy.port.CurrencyRepository;
 import com.mcplatform.application.economy.port.PlayerRepository;
+import com.mcplatform.application.player.port.PlayerPresencePort;
 import com.mcplatform.domain.economy.Balance;
 import com.mcplatform.domain.economy.TransactionId;
 import com.mcplatform.domain.player.PlayerId;
@@ -30,11 +31,14 @@ public final class PlayerSessionService {
     private final PlayerRepository players;
     private final CurrencyRepository currencies;
     private final EconomyService economy;
+    private final PlayerPresencePort presence;
 
-    public PlayerSessionService(PlayerRepository players, CurrencyRepository currencies, EconomyService economy) {
+    public PlayerSessionService(PlayerRepository players, CurrencyRepository currencies, EconomyService economy,
+            PlayerPresencePort presence) {
         this.players = players;
         this.currencies = currencies;
         this.economy = economy;
+        this.presence = presence;
     }
 
     public SessionJoin join(PlayerId player, String name) {
@@ -49,7 +53,17 @@ public final class PlayerSessionService {
                 balances.add(economy.balance(player, currency.code()));
             }
         }
+        presence.markOnline(player); // best-effort; the presence store degrades gracefully if unavailable
         return new SessionJoin(player, name, created, balances);
+    }
+
+    /**
+     * A player disconnected: refresh {@code last_seen} (they were present until now, so recency ordering
+     * stays correct) and clear their live presence. Idempotent.
+     */
+    public void leave(PlayerId player) {
+        players.touchLastSeen(player, Instant.now());
+        presence.markOffline(player);
     }
 
     /** Seed one currency for a new player: credit the configured default, or just materialise a 0 row. */

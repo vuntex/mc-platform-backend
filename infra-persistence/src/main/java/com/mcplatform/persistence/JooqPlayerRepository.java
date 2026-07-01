@@ -82,6 +82,53 @@ public final class JooqPlayerRepository implements PlayerRepository {
     }
 
     @Override
+    public void touchLastSeen(PlayerId player, Instant seenAt) {
+        dsl.update(PLAYER)
+                .set(PLAYER.LAST_SEEN, seenAt.atOffset(ZoneOffset.UTC))
+                .where(PLAYER.UUID.eq(player.value()))
+                .execute();
+    }
+
+    @Override
+    public long count() {
+        return dsl.fetchCount(PLAYER);
+    }
+
+    @Override
+    public long countRegisteredSince(Instant since) {
+        return dsl.fetchCount(dsl.selectFrom(PLAYER)
+                .where(PLAYER.CREATED_AT.ge(since.atOffset(ZoneOffset.UTC))));
+    }
+
+    @Override
+    public List<PlayerLastSeen> findRecentOnline(Collection<UUID> uuids, int limit) {
+        if (uuids.isEmpty()) {
+            return List.of();
+        }
+        return dsl.select(PLAYER.UUID, PLAYER.NAME, PLAYER.LAST_SEEN)
+                .from(PLAYER)
+                .where(PLAYER.UUID.in(uuids))
+                .orderBy(PLAYER.LAST_SEEN.desc())
+                .limit(limit)
+                .fetch(this::toLastSeen);
+    }
+
+    @Override
+    public List<PlayerLastSeen> findRecentExcluding(Collection<UUID> exclude, int limit) {
+        var filter = exclude.isEmpty() ? DSL.noCondition() : PLAYER.UUID.notIn(exclude);
+        return dsl.select(PLAYER.UUID, PLAYER.NAME, PLAYER.LAST_SEEN)
+                .from(PLAYER)
+                .where(filter)
+                .orderBy(PLAYER.LAST_SEEN.desc())
+                .limit(limit)
+                .fetch(this::toLastSeen);
+    }
+
+    private PlayerLastSeen toLastSeen(org.jooq.Record3<UUID, String, OffsetDateTime> r) {
+        return new PlayerLastSeen(r.value1(), r.value2(), r.value3().toInstant());
+    }
+
+    @Override
     public List<PlayerNameMatch> searchByNamePrefix(String prefix, int limit) {
         // Escape LIKE metacharacters in the user input so they match literally; '\' is the escape char.
         String escaped = prefix.toLowerCase(Locale.ROOT)

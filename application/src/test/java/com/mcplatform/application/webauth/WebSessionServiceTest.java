@@ -168,6 +168,31 @@ class WebSessionServiceTest {
         public boolean upsertReturningWhetherNew(PlayerId player, String name, Instant seenAt) {
             throw new UnsupportedOperationException();
         }
+
+        @Override
+        public void touchLastSeen(PlayerId player, Instant seenAt) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long count() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long countRegisteredSince(Instant since) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public java.util.List<PlayerLastSeen> findRecentOnline(java.util.Collection<java.util.UUID> uuids, int limit) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public java.util.List<PlayerLastSeen> findRecentExcluding(java.util.Collection<java.util.UUID> exclude, int limit) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     private static final class FakeAccounts implements WebAccountRepository {

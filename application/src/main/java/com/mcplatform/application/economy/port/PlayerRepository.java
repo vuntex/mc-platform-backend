@@ -14,6 +14,9 @@ public interface PlayerRepository {
     /** A (uuid, name) pair from a name search — display data for picking a player in the web UI. */
     record PlayerNameMatch(UUID uuid, String name) {}
 
+    /** A player row for the "recently active" dashboard list — display data plus its {@code last_seen}. */
+    record PlayerLastSeen(UUID uuid, String name, Instant lastSeen) {}
+
     /** Insert or update the player row, refreshing the cached name and last_seen. */
     void save(PlayerId player, String name, Instant seenAt);
 
@@ -47,4 +50,26 @@ public interface PlayerRepository {
      * joins from multiple nodes (exactly one INSERT wins; the rest are updates).
      */
     boolean upsertReturningWhetherNew(PlayerId player, String name, Instant seenAt);
+
+    /** Refresh only {@code last_seen} for an existing player (used on session leave). No-op if unknown. */
+    void touchLastSeen(PlayerId player, Instant seenAt);
+
+    /** Total number of known players. */
+    long count();
+
+    /** Number of players registered (by {@code created_at}) at or after {@code since}. */
+    long countRegisteredSince(Instant since);
+
+    /**
+     * The given players ordered by {@code last_seen} descending, capped at {@code limit}. UUIDs without a
+     * player row are simply absent. Empty input → empty list. Used to render the online players first.
+     */
+    List<PlayerLastSeen> findRecentOnline(Collection<UUID> uuids, int limit);
+
+    /**
+     * The most recently seen players NOT in {@code exclude}, ordered by {@code last_seen} descending,
+     * capped at {@code limit}. Used to fill the "recently active" list with offline players after the
+     * online ones. Empty {@code exclude} → simply the most recent players.
+     */
+    List<PlayerLastSeen> findRecentExcluding(Collection<UUID> exclude, int limit);
 }

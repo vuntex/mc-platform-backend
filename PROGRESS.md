@@ -1346,3 +1346,44 @@ höhere Rolle/Ziel verwalten/vergeben → 403; Rollen-Liste + Einzel-Rollen-Read
 gefiltert/403, Suche/`/me` ungefiltert; letzter Top-Tier self-demote → 409). Bestehende 002/005/006-
 Suiten unverändert grün (Regression). `./gradlew build` grün; **keine** `plugin-protocol`-/Schema-
 Änderung (kein Publish nötig), POM weiterhin ohne `<dependencies>`.
+
+### Web-Player-Dashboard erledigt (`/api/web/players/recent` + `/stats`) + Live-Presence
+Zwei read-only Web-Endpoints für ein Dashboard-Widget, plus die erste **backend-autoritative
+Presence** (wer ist gerade online). Read-gated über `permission.read`, hinter der `/api/web/**`-JWT-
+Kette (401 ohne Token). Kein Schema-Umbau (nutzt vorhandene `player`-Spalten).
+- **Endpoints (api-rest, in `WebPlayerController` neben `search`):**
+  `GET /api/web/players/recent?limit=12` → `RecentPlayerSummary[]` (`uuid,name,online,lastSeenEpochMilli`),
+  Reihenfolge **online zuerst, dann `last_seen` desc**, leere Liste (`200 []`) normal, `limit`
+  serverseitig geclampt (1..50). `GET /api/web/players/stats` → `PlayerStatsResponse`
+  (`totalPlayers`, `onlineNow`, `newThisWeek` = Registrierungen letzte 7 Tage über `player.created_at`).
+  Dazu `GET /api/web/players/{uuid}` → `PlayerSummary` (autoritative UUID→Name-Auflösung aus derselben
+  gecachten Namensquelle wie die Suche, nicht autoritäts-gefiltert; unbekannte UUID → 404
+  `player_not_found` via neuem `PlayerNotFoundException` + `PlayerExceptionHandler`; die literalen
+  `/search|/recent|/stats`-Mappings haben Vorrang vor der `{uuid}`-Variable). Kein Protocol-/Schema-Umbau.
+- **Presence als Redis-SET** (`mc:presence:online`, backend-autoritativ): neuer Port
+  `PlayerPresencePort` (application) + `RedisPlayerPresenceAdapter` (infra-cache, SADD/SREM/SISMEMBER/
+  SMEMBERS/SCARD). Bewusst **degradierend** — Presence ist ein weiches Signal, keine Korrektheitsgrenze:
+  Writes best-effort (ein Join scheitert nie an einem Redis-Blip), Reads liefern leer/0 wenn Redis weg
+  ist (konform zur „App startet auch ohne Redis"-Philosophie).
+- **Session-Lifecycle füttert Presence:** `PlayerSessionService.join` markiert online (nach dem Upsert);
+  neuer `leave(PlayerId)` frischt `last_seen` (`PlayerRepository.touchLastSeen`) und markiert offline.
+  Neuer REST-Endpoint `POST /api/players/{uuid}/session/leave` (204) auf `PlayerSessionController` +
+  `SessionEndpoints.LEAVE`-Descriptor im Contract, damit das Plugin den Quit meldet.
+- **Komposition (application `PlayerDirectoryService`):** verbindet Presence (Redis) mit Stammdaten
+  (Postgres) — die Ordnung „online first, dann last_seen desc" entsteht hier (online-Gruppe via
+  `findRecentOnline`, dann Auffüllen mit `findRecentExcluding`, nie doppelt). `PlayerRepository` um
+  `count`/`countRegisteredSince`/`findRecentOnline`/`findRecentExcluding`/`touchLastSeen` erweitert
+  (jOOQ-Impl, bestehender Player-Port wiederverwendet — kein neuer Port).
+- **Kein generischer Baustein geändert:** neuer Feature-Port + Adapter + Service + Controller-Erweiterung;
+  `RedisCacheAdapter`/Security-Chain/Mapper unverändert (nur konsumiert).
+- **Tests grün:** `PlayerDirectoryServiceTest` (online-first-Ordnung, Offline-Auffüllung, Limit-Clamp,
+  Stats-Mathematik mit fixer Clock, Fakes); `JooqPlayerRepositoryTest` erweitert (count/registeredSince-
+  Grenze, findRecentOnline-Ordnung+Limit, findRecentExcluding, touchLastSeen; Testcontainers-Postgres);
+  `RedisPlayerPresenceAdapterTest` (SADD/SREM/Membership/Count, Testcontainers-Redis); E2E
+  `WebPlayersDirectoryTest` (recent online-first, stats-Deltas, join→online/leave→offline, 401/403).
+  `./gradlew build` grün. **Protocol geändert** (neue DTOs `RecentPlayerSummary`/`PlayerStatsResponse`
+  + `SessionEndpoints.LEAVE`) → `:plugin-protocol:publishToMavenLocal` gemacht, POM weiterhin **ohne**
+  `<dependencies>`.
+- **Plugin-Repo-Folgeschritt (separates Repo):** beim Quit `SessionEndpoints.LEAVE` rufen; dann
+  `build --refresh-dependencies`. Bis dahin bleiben Spieler nach Join als online geführt (Single-Server,
+  akzeptiert). Der Web-Endpoint-Prefix folgt der Konvention `/api/web/**` (nur Web, nie Plugin).
